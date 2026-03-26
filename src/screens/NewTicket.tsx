@@ -1,0 +1,285 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Send, Monitor, FileText, X, Upload, Image as ImageIcon, Trash2, Tag } from 'lucide-react';
+import { toast } from 'sonner';
+import { Platform, User, TicketUrgency, Organization, PlatformType, CategoryType } from '../types';
+import { cn } from '../lib/utils';
+import { supabase, uploadFile } from '../supabase';
+
+interface NewTicketProps {
+  currentUser: User;
+  onCancel: () => void;
+  onSubmit: (data: { 
+    subject: string; 
+    description: string; 
+    platform: Platform;
+    category: string;
+    urgency: TicketUrgency;
+    attachment?: { name: string; url: string; type: 'image' | 'file' }
+  }) => void;
+}
+
+export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onSubmit }) => {
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [platformsData, setPlatformsData] = useState<PlatformType[]>([]);
+  const [categoriesData, setCategoriesData] = useState<CategoryType[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { data: orgs, error: orgsError } = await supabase.from('organizations').select('*');
+        if (orgsError) console.error('[NewTicket] Error fetching organizations:', orgsError);
+        
+        const { data: platforms, error: platformsError } = await supabase.from('platforms').select('*');
+        if (platformsError) console.error('[NewTicket] Error fetching platforms:', platformsError);
+        
+        const { data: categories, error: categoriesError } = await supabase.from('categories').select('*');
+        if (categoriesError) console.error('[NewTicket] Error fetching categories:', categoriesError);
+        
+        if (orgs) setOrganizations(orgs);
+        if (platforms) setPlatformsData(platforms);
+        if (categories) setCategoriesData(categories);
+      } catch (err: any) {
+        console.error('[NewTicket] Critical error in fetchData:', err.message);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const userOrg = currentUser.organizationId 
+    ? organizations.find(org => org.id === currentUser.organizationId)
+    : null;
+
+  const availablePlatforms = userOrg 
+    ? platformsData.filter(p => userOrg.platforms.includes(p.id))
+    : platformsData;
+
+  const availableCategories = userOrg
+    ? categoriesData.filter(c => userOrg.categories.includes(c.id))
+    : categoriesData;
+
+  const [subject, setSubject] = useState('');
+  const [description, setDescription] = useState('');
+  const [platform, setPlatform] = useState<Platform>('');
+  const [category, setCategory] = useState<string>('');
+  const [urgency, setUrgency] = useState<TicketUrgency>('Média');
+  const [selectedFile, setSelectedFile] = useState<{ name: string; url: string; type: 'image' | 'file' } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Set initial values when data is loaded
+  useEffect(() => {
+    if (availablePlatforms.length > 0 && !platform) {
+      setPlatform(availablePlatforms[0].name as Platform);
+    }
+    if (availableCategories.length > 0 && !category) {
+      setCategory(availableCategories[0].name);
+    }
+  }, [availablePlatforms, availableCategories, platform, category]);
+
+  const platforms: Platform[] = availablePlatforms.map(p => p.name as Platform);
+  const categories: string[] = availableCategories.map(c => c.name);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subject.trim() || !description.trim() || !platform || !category) return;
+    onSubmit({ 
+      subject, 
+      description, 
+      platform, 
+      category, 
+      urgency, 
+      attachment: selectedFile || undefined 
+    });
+  };
+
+  const urgencyLevels: { label: TicketUrgency; color: string; activeBorder: string; activeBg: string; description: string }[] = [
+    { label: 'Baixa', color: 'bg-emerald-500', activeBorder: 'border-emerald-500', activeBg: 'bg-emerald-500/10', description: 'Dúvidas ou melhorias' },
+    { label: 'Média', color: 'bg-sky-500', activeBorder: 'border-sky-500', activeBg: 'bg-sky-500/10', description: 'Problemas leves' },
+    { label: 'Alta', color: 'bg-orange-500', activeBorder: 'border-orange-500', activeBg: 'bg-orange-500/10', description: 'Erro importante' },
+    { label: 'Crítica', color: 'bg-red-500', activeBorder: 'border-red-500', activeBg: 'bg-red-500/10', description: 'Sistema parado' },
+  ];
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const uploadedFile = await uploadFile(file);
+      setSelectedFile(uploadedFile);
+      toast.success('Arquivo anexado com sucesso!');
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      toast.error('Erro ao fazer upload do arquivo. Verifique se o bucket "tickets" existe no Supabase.');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  return (
+    <div className="flex-1 min-h-0 bg-discord-dark overflow-y-auto">
+      <div className="max-w-3xl mx-auto p-8 pb-32">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h2 className="text-2xl font-black text-discord-text tracking-tight">Abrir Novo Ticket</h2>
+            <p className="text-discord-muted text-sm mt-1">Conte-nos o que está acontecendo e nossa equipe ajudará você.</p>
+          </div>
+          <button 
+            onClick={onCancel}
+            className="p-2 text-discord-muted hover:text-discord-text hover:bg-discord-hover rounded-full transition-all"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <div className="bg-discord-darker p-6 rounded-xl border border-discord-border space-y-6">
+            <div>
+              <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Assunto do Problema</label>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Ex: Erro ao carregar extrato mensal"
+                className="w-full bg-discord-darkest border-none rounded-md p-3 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none"
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Plataforma Relacionada</label>
+                <div className="relative">
+                  <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                  <select
+                    value={platform}
+                    onChange={(e) => setPlatform(e.target.value as Platform)}
+                    className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none appearance-none cursor-pointer"
+                  >
+                    {platforms.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Categoria</label>
+                <div className="relative">
+                  <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none appearance-none cursor-pointer"
+                  >
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Anexar Arquivo (Opcional)</label>
+              <input 
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              {!selectedFile ? (
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full bg-discord-darkest border-2 border-dashed border-discord-border rounded-md p-3 flex items-center justify-center gap-2 cursor-pointer hover:border-discord-accent/50 transition-colors group"
+                >
+                  <Upload className={cn("w-4 h-4", isUploading ? "animate-spin" : "text-discord-muted group-hover:text-discord-accent")} />
+                  <span className="text-xs text-discord-muted font-bold uppercase tracking-wider group-hover:text-discord-text">
+                    {isUploading ? 'Fazendo upload...' : 'Upload de imagem ou log'}
+                  </span>
+                </div>
+              ) : (
+                <div className="w-full bg-discord-darkest border border-discord-accent/30 rounded-md p-2 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-discord-dark flex items-center justify-center shrink-0">
+                    {selectedFile.type === 'image' ? (
+                      <ImageIcon className="w-4 h-4 text-discord-accent" />
+                    ) : (
+                      <FileText className="w-4 h-4 text-discord-accent" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-discord-text font-bold truncate">{selectedFile.name}</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedFile(null)}
+                    className="p-1 text-discord-muted hover:text-red-400 hover:bg-red-400/10 rounded transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Nível de Urgência</label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {urgencyLevels.map((level) => (
+                  <button
+                    key={level.label}
+                    type="button"
+                    onClick={() => setUrgency(level.label)}
+                    className={cn(
+                      "flex flex-col items-start p-3 rounded-lg border transition-all text-left group/btn",
+                      urgency === level.label 
+                        ? `${level.activeBorder} ${level.activeBg} ring-1 ring-offset-0 ring-opacity-50` 
+                        : "border-discord-border bg-discord-darkest hover:border-discord-muted"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={cn("w-2 h-2 rounded-full", level.color)} />
+                      <span className={cn("text-xs font-bold", urgency === level.label ? "text-discord-text" : "text-discord-muted group-hover/btn:text-discord-text")}>
+                        {level.label}
+                      </span>
+                    </div>
+                    <p className="text-[9px] text-discord-muted leading-tight">{level.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Descrição Detalhada</label>
+              <div className="relative">
+                <FileText className="absolute left-3 top-4 w-4 h-4 text-discord-muted" />
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Descreva o passo a passo do erro ou sua dúvida..."
+                  rows={6}
+                  className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none resize-none"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-4">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-6 py-2.5 text-discord-text font-bold text-sm hover:underline"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="bg-discord-accent hover:bg-discord-accent/90 text-white font-bold px-8 py-2.5 rounded-md transition-all duration-200 flex items-center gap-2 shadow-lg shadow-discord-accent/20 active:scale-[0.98]"
+            >
+              <Send className="w-4 h-4" />
+              Abrir Ticket
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};

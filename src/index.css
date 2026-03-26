@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Nunito", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-discord-dark: var(--bg-card);
+  --color-discord-darker: var(--bg-secondary);
+  --color-discord-darkest: var(--bg-primary);
+  --color-discord-sidebar: var(--bg-sidebar);
+  --color-discord-accent: var(--accent-color, #5865f2);
+  --color-discord-text: var(--text-primary);
+  --color-discord-muted: var(--text-muted);
+  --color-discord-hover: var(--bg-hover);
+  --color-discord-active: var(--bg-active);
+  --color-discord-border: var(--border-color);
+}
+
+:root {
+  --bg-primary: #1e1f22;
+  --bg-secondary: #2b2d31;
+  --bg-card: #313338;
+  --bg-sidebar: #232428;
+  --bg-hover: #35373c;
+  --bg-active: #3f4147;
+  --text-primary: #dbdee1;
+  --text-muted: #949ba4;
+  --accent-color: #5865f2;
+  --border-color: rgba(255, 255, 255, 0.05);
+}
+
+.light {
+  --bg-primary: #f2f3f5;
+  --bg-secondary: #ebedef;
+  --bg-card: #ffffff;
+  --bg-sidebar: #e3e5e8;
+  --bg-hover: #e1e2e5;
+  --bg-active: #dbdee1;
+  --text-primary: #060607;
+  --text-muted: #4e5058;
+  --border-color: rgba(0, 0, 0, 0.08);
+}
+
+@layer base {
+  body {
+    @apply bg-discord-darkest text-discord-text font-sans antialiased transition-colors duration-200;
+  }
+}
+
+/* Custom scrollbar to match Discord style */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-sidebar);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-active);
+}
