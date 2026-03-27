@@ -2,9 +2,11 @@
   "name": "react-example",
   "private": true,
   "version": "0.0.0",
+  "description": "TTICKETT — rode sempre npm run dev (Express + Vite). Não use apenas vite.",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:3000": "cmd.exe /c dev-3000.cmd",
     "start": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",

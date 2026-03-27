@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, List, FileSpreadsheet, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 import { supabase, testConnection } from './supabase';
 import { exportToExcel, exportTicketsToPDF } from './lib/exportUtils';
 import { User, Ticket, TicketStatus, Platform, TicketUrgency } from './types';
 import { Login } from './screens/Login';
 import { Sidebar } from './components/Sidebar';
-import { Topbar } from './components/Topbar';
+import { Topbar, TopbarNotification } from './components/Topbar';
 import { TicketCard } from './components/TicketCard';
 import { StatusBadge } from './components/StatusBadge';
 import { UrgencyBadge } from './components/UrgencyBadge';
@@ -22,7 +23,8 @@ import { Toaster, toast } from 'sonner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  // Não bloquear renderização inicial: auth inicializa em background.
+  const [isAuthReady, setIsAuthReady] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [supabaseStatus, setSupabaseStatus] = useState<'checking' | 'online' | 'offline' | 'invalid_key'>('checking');
+  const [readNotificationsMap, setReadNotificationsMap] = useState<Record<string, true>>({});
 
   // Global error handlers for better debugging
   useEffect(() => {
@@ -101,126 +104,107 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const initAuth = async () => {
-      console.log("Starting auth initialization...");
-      try {
-        // 1. Get Session com timeout para evitar tela de loading presa
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('SESSION_TIMEOUT')), 3000)
-        );
-        const { data, error: sessionError } = await Promise.race([
-          sessionPromise,
-          timeoutPromise,
-        ]) as Awaited<ReturnType<typeof supabase.auth.getSession>>;
-        const session = data?.session;
-        
-        if (sessionError) {
-          console.warn("Auth session fetch failed:", sessionError.message);
-          setUser(null);
-        } else if (session?.user) {
-          console.log("Session found for:", session.user.email);
-          
-          // 2. We have a basic user, let's set a temporary state to allow the app to load
-          // We'll fetch the full profile in the background
-          const tempUser: User = {
-            id: session.user.id,
-            email: session.user.email || '',
-            name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Usuário',
-            role: 'client', // Default role until we fetch the doc
-            organizationId: '',
-            avatar: session.user.user_metadata?.avatar_url
-          } as User;
-          
-          setUser(tempUser);
+    const tempUserFromAuth = (authUser: SupabaseAuthUser): User =>
+      ({
+        id: authUser.id,
+        email: authUser.email || '',
+        name:
+          (authUser.user_metadata?.full_name as string | undefined) ||
+          (authUser.user_metadata?.name as string | undefined) ||
+          authUser.email?.split('@')[0] ||
+          'Usuário',
+        role:
+          authUser.email === 'renan@reetech.com.br'
+            ? 'admin'
+            : ((authUser.user_metadata?.role as User['role'] | undefined) || 'client'),
+        organizationId: '',
+        avatar: authUser.user_metadata?.avatar_url as string | undefined,
+      }) as User;
 
-          // 3. Fetch full profile in background
-          const fetchProfile = async () => {
-            try {
-              const { data: userDoc, error: docError } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', session.user.id)
-                .single();
-              
-              if (docError) {
-                console.warn("Background profile fetch error:", docError.message);
-              } else if (userDoc) {
-                console.log("Full user profile loaded:", userDoc.email);
-                setUser(userDoc as User);
-              }
-            } catch (e: any) {
-              console.warn("Background profile fetch failed:", e.message);
-            }
-          };
-          fetchProfile();
-        } else {
-          console.log("No active session found.");
-          setUser(null);
+    const fetchFullProfileInBackground = (userId: string) => {
+      void (async () => {
+        try {
+          const query = supabase.from('users').select('*').eq('id', userId).maybeSingle();
+          const timedOut = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: { message: 'timeout' } }), 15000)
+          );
+          const result = await Promise.race([query, timedOut]);
+          if (result?.data) setUser(result.data as User);
+        } catch (e) {
+          console.warn('Perfil (background):', e);
         }
-      } catch (error: any) {
-        if (error?.message === 'SESSION_TIMEOUT') {
-          console.warn("Auth session fetch timed out. Continuing without blocking UI.");
+      })();
+    };
+
+    const applySessionUser = (authUser: SupabaseAuthUser) => {
+      setUser(tempUserFromAuth(authUser));
+      fetchFullProfileInBackground(authUser.id);
+    };
+
+    const initAuth = async () => {
+      console.log('Starting auth initialization...');
+      try {
+        const raced = await Promise.race([
+          supabase.auth.getSession().then((r) => ({ kind: 'ok' as const, r })),
+          new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 25000)),
+        ]);
+
+        if (raced.kind === 'timeout') {
+          console.warn('Auth: getSession demorou; sessão pode chegar via INITIAL_SESSION.');
         } else {
-          console.error("Auth init error:", error.message);
+          const { data, error: sessionError } = raced.r;
+          if (sessionError) {
+            console.warn('Auth session fetch failed:', sessionError.message);
+            setUser(null);
+          } else if (data?.session?.user) {
+            console.log('Session found for:', data.session.user.email);
+            applySessionUser(data.session.user);
+          } else {
+            console.log('No active session in getSession().');
+            setUser(null);
+          }
         }
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        console.error('Auth init error:', err?.message);
         setUser(null);
       } finally {
-        console.log("Auth ready.");
+        console.log('Auth ready.');
         setIsAuthReady(true);
       }
     };
 
     initAuth();
 
-    // Safety timeout: ensure app loads even if auth init hangs indefinitely
-    const timeout = setTimeout(() => {
-      setIsAuthReady(current => {
+    const failSafeAuth = setTimeout(() => {
+      setIsAuthReady((current) => {
         if (!current) {
-          console.warn("Auth initialization safety timeout reached.");
-          toast.warning("A inicialização está demorando...", {
-            description: "O sistema tentará carregar assim mesmo. Verifique sua conexão se os dados não aparecerem."
-          });
+          console.warn('Auth fail-safe: liberando UI.');
           return true;
         }
         return current;
       });
-    }, 5000);
+    }, 28000);
 
-    const authResponse = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Auth state change:", event, session?.user?.email);
-      try {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          if (session?.user) {
-            const { data: userDoc, error } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', session.user.id)
-              .single();
-            
-            if (error) {
-              console.error("Error fetching user doc on auth change:", error);
-            } else if (userDoc) {
-              setUser(userDoc as User);
-            }
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-        }
-      } catch (err) {
-        console.error("Exception in onAuthStateChange callback:", err);
-      } finally {
-        setIsAuthReady(true);
+    const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
+      setIsAuthReady(true);
+      console.log('Auth state change:', event, session?.user?.email);
+
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        return;
+      }
+
+      if (session?.user) {
+        applySessionUser(session.user);
       }
     });
 
-    const subscription = authResponse?.data?.subscription;
+    const subscription = authSub.subscription;
 
     return () => {
-      if (subscription) {
-        subscription.unsubscribe();
-      }
-      clearTimeout(timeout);
+      subscription.unsubscribe();
+      clearTimeout(failSafeAuth);
     };
   }, []);
 
@@ -282,6 +266,59 @@ export default function App() {
     return tickets;
   }, [tickets, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    const storageKey = `notifications_read_${user.id}`;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        setReadNotificationsMap(JSON.parse(raw));
+      } else {
+        setReadNotificationsMap({});
+      }
+    } catch {
+      setReadNotificationsMap({});
+    }
+  }, [user?.id]);
+
+  const notifications = useMemo<TopbarNotification[]>(() => {
+    return [...allowedTickets]
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .slice(0, 20)
+      .map((ticket) => {
+        const id = `${ticket.id}:${ticket.updatedAt.toISOString()}`;
+        return {
+          id,
+          title: `${ticket.number} • ${ticket.status}`,
+          description: ticket.subject,
+          createdAt: ticket.updatedAt,
+          unread: !readNotificationsMap[id],
+        };
+      });
+  }, [allowedTickets, readNotificationsMap]);
+
+  const persistReadNotifications = (next: Record<string, true>) => {
+    setReadNotificationsMap(next);
+    if (user) {
+      localStorage.setItem(`notifications_read_${user.id}`, JSON.stringify(next));
+    }
+  };
+
+  const handleNotificationClick = (notification: TopbarNotification) => {
+    const ticketId = notification.id.split(':')[0];
+    persistReadNotifications({ ...readNotificationsMap, [notification.id]: true });
+    setActiveTab('dashboard');
+    setSelectedTicketId(ticketId);
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    const next = { ...readNotificationsMap };
+    notifications.forEach((notification) => {
+      next[notification.id] = true;
+    });
+    persistReadNotifications(next);
+  };
+
   const filteredTickets = useMemo(() => {
     let result = allowedTickets;
 
@@ -314,7 +351,20 @@ export default function App() {
 
     const fetchTickets = async () => {
       try {
-        const { data, error } = await supabase.from('tickets').select('*');
+        const query = supabase.from('tickets').select('*');
+        const timedOut = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: { message: 'timeout' } }), 30000)
+        );
+        const { data, error } = (await Promise.race([query, timedOut])) as {
+          data: Ticket[] | null;
+          error: { message: string } | null;
+        };
+        if (error?.message === 'timeout') {
+          console.warn('Tickets: consulta demorou demais.');
+          toast.warning('Tickets não carregaram a tempo', { description: 'Recarregue a página ou verifique a rede.' });
+          setTickets([]);
+          return;
+        }
         if (error) {
           console.error("Error fetching tickets:", error);
           toast.error("Erro ao carregar tickets", { description: error.message });
@@ -369,51 +419,110 @@ export default function App() {
     };
 
     try {
-      const { error } = await supabase.from('tickets').insert(newTicket);
+      const { data: insertedTicket, error } = await supabase
+        .from('tickets')
+        .insert(newTicket)
+        .select('*')
+        .single();
       if (error) throw error;
+      if (insertedTicket) {
+        setTickets(prev => [
+          {
+            ...insertedTicket,
+            createdAt: new Date(insertedTicket.createdAt),
+            updatedAt: new Date(insertedTicket.updatedAt),
+            estimatedDeadline: insertedTicket.estimatedDeadline ? new Date(insertedTicket.estimatedDeadline) : undefined,
+            messages: (insertedTicket.messages || []).map((m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp)
+            }))
+          } as Ticket,
+          ...prev
+        ]);
+      }
       setActiveTab('dashboard');
     } catch (error) {
       console.error("Error creating ticket:", error);
-      toast.error("Erro ao criar ticket");
+      const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';
+      toast.error("Erro ao criar ticket", { description: msg });
     }
   };
 
   const handleUpdateTicketStatus = async (ticketId: string, status: TicketStatus) => {
     try {
-      const { error } = await supabase.from('tickets').update({
-        status,
-        updatedAt: new Date().toISOString()
-      }).eq('id', ticketId);
+      const updatedAt = new Date();
+      const { error, data } = await supabase
+        .from('tickets')
+        .update({
+          status,
+          updatedAt: updatedAt.toISOString()
+        })
+        .eq('id', ticketId)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        throw new Error('Sem permissão para alterar status deste ticket.');
+      }
+      setTickets(prev =>
+        prev.map(t => (t.id === ticketId ? { ...t, status, updatedAt } : t))
+      );
     } catch (error) {
       console.error("Error updating status:", error);
-      toast.error("Erro ao atualizar status");
+      const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';
+      toast.error("Erro ao atualizar status", { description: msg });
     }
   };
 
   const handleUpdateTicketAssignee = async (ticketId: string, assignee: string) => {
     try {
-      const { error } = await supabase.from('tickets').update({
-        assignee,
-        updatedAt: new Date().toISOString()
-      }).eq('id', ticketId);
+      const updatedAt = new Date();
+      const { error, data } = await supabase
+        .from('tickets')
+        .update({
+          assignee,
+          updatedAt: updatedAt.toISOString()
+        })
+        .eq('id', ticketId)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        throw new Error('Sem permissão para alterar responsável deste ticket.');
+      }
+      setTickets(prev =>
+        prev.map(t => (t.id === ticketId ? { ...t, assignee, updatedAt } : t))
+      );
     } catch (error) {
       console.error("Error updating assignee:", error);
-      toast.error("Erro ao atualizar responsável");
+      const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';
+      toast.error("Erro ao atualizar responsável", { description: msg });
     }
   };
 
   const handleUpdateEstimatedDeadline = async (ticketId: string, date: Date | undefined) => {
     try {
-      const { error } = await supabase.from('tickets').update({
-        estimatedDeadline: date ? date.toISOString() : null,
-        updatedAt: new Date().toISOString()
-      }).eq('id', ticketId);
+      const updatedAt = new Date();
+      const { error, data } = await supabase
+        .from('tickets')
+        .update({
+          estimatedDeadline: date ? date.toISOString() : null,
+          updatedAt: updatedAt.toISOString()
+        })
+        .eq('id', ticketId)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        throw new Error('Sem permissão para alterar prazo deste ticket.');
+      }
+      setTickets(prev =>
+        prev.map(t => (t.id === ticketId ? { ...t, estimatedDeadline: date, updatedAt } : t))
+      );
     } catch (error) {
       console.error("Error updating deadline:", error);
-      toast.error("Erro ao atualizar prazo");
+      const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';
+      toast.error("Erro ao atualizar prazo", { description: msg });
     }
   };
 
@@ -440,14 +549,28 @@ export default function App() {
     };
 
     try {
-      const { error } = await supabase.from('tickets').update({
-        messages: [...(ticket.messages || []), newMessage],
-        updatedAt: new Date().toISOString()
-      }).eq('id', ticketId);
+      const updatedAt = new Date();
+      const nextMessages = [...(ticket.messages || []), newMessage];
+      const { error, data } = await supabase
+        .from('tickets')
+        .update({
+          messages: nextMessages,
+          updatedAt: updatedAt.toISOString()
+        })
+        .eq('id', ticketId)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        throw new Error('Sem permissão para enviar mensagem neste ticket.');
+      }
+      setTickets(prev =>
+        prev.map(t => (t.id === ticketId ? { ...t, messages: nextMessages as any, updatedAt } : t))
+      );
     } catch (error) {
       console.error("Error adding message:", error);
-      toast.error("Erro ao enviar mensagem");
+      const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';
+      toast.error("Erro ao enviar mensagem", { description: msg });
     }
   };
 
@@ -574,6 +697,9 @@ export default function App() {
                 searchQuery="" 
                 setSearchQuery={() => {}} 
                 onMenuClick={() => setIsMobileMenuOpen(true)}
+                notifications={notifications}
+                onNotificationClick={handleNotificationClick}
+                onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
               />
               <Settings 
                 currentUser={user} 
@@ -597,6 +723,9 @@ export default function App() {
                 searchQuery="" 
                 setSearchQuery={() => {}} 
                 onMenuClick={() => setIsMobileMenuOpen(true)}
+                notifications={notifications}
+                onNotificationClick={handleNotificationClick}
+                onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
               />
               <Registrations 
                 key={`registrations-${registrationsState.navigationId || 0}`}
@@ -620,6 +749,9 @@ export default function App() {
                 searchQuery="" 
                 setSearchQuery={() => {}} 
                 onMenuClick={() => setIsMobileMenuOpen(true)}
+                notifications={notifications}
+                onNotificationClick={handleNotificationClick}
+                onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
               />
               <Reports />
             </motion.div>
@@ -636,6 +768,9 @@ export default function App() {
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 onMenuClick={() => setIsMobileMenuOpen(true)}
+                notifications={notifications}
+                onNotificationClick={handleNotificationClick}
+                onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
               />
               
               <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-32">

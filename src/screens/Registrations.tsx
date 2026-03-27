@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Monitor, Tag, Plus, X, Save, ArrowLeft, Info, Trash2, Edit3, Building2, FileSpreadsheet, FileText, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -75,29 +75,35 @@ export const Registrations: React.FC<RegistrationsProps> = ({
     return org;
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const { data: orgs, error: orgsError } = await supabase.from('organizations').select('*');
-        const { data: usersData, error: usersError } = await supabase.from('users').select('*');
-        const { data: platformsData, error: platformsError } = await supabase.from('platforms').select('*');
-        const { data: categoriesData, error: categoriesError } = await supabase.from('categories').select('*');
+  /** Recarrega todas as listas (grade, contagens e listagens). */
+  const refreshRegistrationLists = useCallback(async () => {
+    try {
+      const [orgsRes, usersRes, platRes, catRes] = await Promise.all([
+        supabase.from('organizations').select('*'),
+        supabase.from('users').select('*'),
+        supabase.from('platforms').select('*'),
+        supabase.from('categories').select('*'),
+      ]);
 
-        if (orgsError) console.error('[Registrations] Error fetching organizations:', orgsError);
-        if (usersError) console.error('[Registrations] Error fetching users:', usersError);
-        if (platformsError) console.error('[Registrations] Error fetching platforms:', platformsError);
-        if (categoriesError) console.error('[Registrations] Error fetching categories:', categoriesError);
+      if (orgsRes.error) console.error('[Registrations] organizations:', orgsRes.error);
+      if (usersRes.error) console.error('[Registrations] users:', usersRes.error);
+      if (platRes.error) console.error('[Registrations] platforms:', platRes.error);
+      if (catRes.error) console.error('[Registrations] categories:', catRes.error);
 
-        if (orgs) setOrganizations(orgs.map(normalizeOrganization));
-        if (usersData) setUsers(usersData.map((u: any) => ({ ...u, role: normalizeUserRole(u.role) })));
-        if (platformsData) setPlatforms(platformsData);
-        if (categoriesData) setCategories(categoriesData);
-      } catch (err: any) {
-        console.error('[Registrations] Critical error in fetchData:', err.message);
+      if (orgsRes.data) setOrganizations(orgsRes.data.map(normalizeOrganization));
+      if (usersRes.data) {
+        setUsers(usersRes.data.map((u: any) => ({ ...u, role: normalizeUserRole(u.role) })));
       }
-    };
-    fetchData();
+      if (platRes.data) setPlatforms(platRes.data);
+      if (catRes.data) setCategories(catRes.data);
+    } catch (err: unknown) {
+      console.error('[Registrations] refreshRegistrationLists:', err);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshRegistrationLists();
+  }, [refreshRegistrationLists]);
 
   // Form state
   const [editingItem, setEditingItem] = useState<any | null>(initialEditingItem || null);
@@ -185,16 +191,64 @@ export const Registrations: React.FC<RegistrationsProps> = ({
 
       const buildPayload = () => {
         if (tableName === 'organizations') {
-          const { contactPerson, ...rest } = formData || {};
-          const contactperson = contactPerson ?? rest.contactperson ?? null;
+          const {
+            name,
+            platforms,
+            categories,
+            address,
+            phone,
+            email,
+            observations,
+            contactPerson,
+            contactperson,
+          } = formData || {};
+          const rest = { name, platforms, categories, address, phone, email, observations };
+          const dbContactPerson = contactPerson ?? contactperson ?? null;
           // `contactPerson` é só para UI; no banco a coluna é `contactperson`
-          return { ...rest, contactperson };
+          return { ...rest, contactperson: dbContactPerson } as any;
         }
         if (tableName === 'users') {
+          const { name, email, role, avatar, organizationId, phone, whatsapp, observations } = formData || {};
           return {
-            ...(formData || {}),
-            role: normalizeUserRole((formData || {}).role),
+            name,
+            email,
+            role: normalizeUserRole(role),
+            avatar,
+            organizationId,
+            phone,
+            whatsapp,
+            observations,
           };
+        }
+        if (tableName === 'platforms') {
+          const { id, name, url, env } = formData || {};
+          const normalizedId =
+            (id && String(id).trim()) ||
+            (name
+              ? String(name)
+                  .normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, '-')
+                  .replace(/(^-|-$)/g, '')
+              : '') ||
+            `platform-${Date.now()}`;
+          return { id: normalizedId, name, url, env };
+        }
+        if (tableName === 'categories') {
+          const { id, name, desc } = formData || {};
+          const normalizedId =
+            (id && String(id).trim()) ||
+            (name
+              ? String(name)
+                  .normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, '-')
+                  .replace(/(^-|-$)/g, '')
+              : '') ||
+            `category-${Date.now()}`;
+          return { id: normalizedId, name, desc };
         }
         return formData;
       };
@@ -232,7 +286,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
           const { error: userError } = await supabase
             .from('users')
             .insert({
-              ...formData,
+              ...(payload || {}),
               id: authData?.user?.id,
               createdAt: new Date().toISOString()
             });
@@ -252,6 +306,8 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         }
         toast.success(getSuccessMessage(activeType, false));
       }
+
+      await refreshRegistrationLists();
 
       if (currentUser?.role === 'agent') {
         onBackToDashboard?.();
@@ -296,6 +352,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         .eq('id', id);
       if (error) throw error;
       toast.success(getDeleteMessage(type));
+      await refreshRegistrationLists();
     } catch (error) {
       console.error("Error deleting:", error);
       toast.error("Erro ao excluir");

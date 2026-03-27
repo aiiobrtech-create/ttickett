@@ -1,10 +1,121 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LogIn } from 'lucide-react';
-import { supabase } from '../supabase';
+import { supabase, supabaseAnonKey, supabaseUrl } from '../supabase';
 import { User } from '../types';
 
 interface LoginProps {
   onLogin: (user: User) => void;
+}
+
+/** Evita exibir códigos internos na UI */
+function humanizeAuthError(raw: string | undefined): string {
+  const m = (raw || '').trim();
+  if (
+    m === 'LOGIN_TIMEOUT' ||
+    m === 'GETSESSION_TIMEOUT' ||
+    m === 'SETSESSION_TIMEOUT' ||
+    m === 'PROFILE_TIMEOUT' ||
+    m === 'SESSION_NOT_READY'
+  ) {
+    return 'Não foi possível concluir a autenticação a tempo. Aguarde alguns segundos e tente novamente.';
+  }
+  if (m === 'Invalid login credentials' || /invalid login credentials|invalid_grant/i.test(m)) {
+    return 'Email ou senha inválidos. Verifique se a senha está correta.';
+  }
+  if (/fetch|network|failed to fetch|abort/i.test(m)) {
+    return 'Falha de conexão. Verifique sua internet e se o servidor está rodando (npm run dev).';
+  }
+  return m || 'Não foi possível entrar. Tente novamente.';
+}
+
+const TOKEN_REQUEST_MS = 120_000;
+
+function isCredentialMessage(msg: string | undefined) {
+  return !!msg && /invalid login credentials|invalid_grant|email not confirmed|email address not confirmed/i.test(msg);
+}
+
+function isRetryableMessage(msg: string | undefined) {
+  return (
+    !!msg &&
+    (msg === 'LOGIN_TIMEOUT' ||
+      msg === 'SESSION_NOT_READY' ||
+      msg === 'SETSESSION_TIMEOUT' ||
+      /network|fetch|abort|failed to fetch/i.test(msg.toLowerCase()))
+  );
+}
+
+/** Login por HTTP direto ao GoTrue (evita travamentos do signInWithPassword no @supabase/supabase-js). */
+async function fetchPasswordGrant(email: string, password: string): Promise<{
+  ok: boolean;
+  payload: Record<string, unknown>;
+  errorMessage: string;
+}> {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return { ok: false, payload: {}, errorMessage: 'Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).' };
+  }
+
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), TOKEN_REQUEST_MS);
+
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+      signal: controller.signal,
+    });
+
+    const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+
+    if (!res.ok) {
+      const msg =
+        (typeof payload.msg === 'string' && payload.msg) ||
+        (typeof payload.error_description === 'string' && payload.error_description) ||
+        (typeof payload.error === 'string' && payload.error) ||
+        'Invalid login credentials';
+      return { ok: false, payload, errorMessage: String(msg) };
+    }
+
+    return { ok: true, payload, errorMessage: '' };
+  } catch (e: unknown) {
+    const err = e as { name?: string; message?: string };
+    if (err?.name === 'AbortError') {
+      return { ok: false, payload: {}, errorMessage: 'LOGIN_TIMEOUT' };
+    }
+    return { ok: false, payload: {}, errorMessage: err?.message || 'NETWORK_ERROR' };
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function persistGrantSession(payload: Record<string, unknown>): Promise<{
+  user: import('@supabase/supabase-js').User | null;
+  error: { message: string } | null;
+}> {
+  const accessToken = payload.access_token as string | undefined;
+  const refreshToken = payload.refresh_token as string | undefined;
+  if (!accessToken || !refreshToken) {
+    return { user: null, error: { message: 'SESSION_NOT_READY' } };
+  }
+
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+
+  if (error) {
+    const u = payload.user as import('@supabase/supabase-js').User | undefined;
+    if (u?.id) {
+      return { user: u, error: null };
+    }
+    return { user: null, error: { message: error.message || 'SESSION_NOT_READY' } };
+  }
+
+  const u = data.session?.user ?? (payload.user as import('@supabase/supabase-js').User | undefined) ?? null;
+  return { user: u, error: u ? null : { message: 'SESSION_NOT_READY' } };
 }
 
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
@@ -12,130 +123,209 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  /** Porta/URLs reais do Express (quando 3000 estiver ocupada, o servidor muda de porta). */
+  const [localServerUrls, setLocalServerUrls] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    fetch('/__meta')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m: { urls?: string[] } | null) => {
+        if (m?.urls?.length) setLocalServerUrls(m.urls);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
+    const uiFailsafeTimeout = setTimeout(() => {
+      setLoading(false);
+      setError(humanizeAuthError('LOGIN_TIMEOUT'));
+    }, 130000);
+
     let loginEmail = email.toLowerCase().trim();
     if (loginEmail === 'admin') {
       loginEmail = 'renan.santos95neves@gmail.com';
     }
 
-    const loginTimeout = setTimeout(() => {
-      setLoading(currentLoading => {
-        if (currentLoading) {
-          console.warn('Login process timed out after 90s');
-          setError('O login está demorando mais que o esperado. Verifique sua conexão e tente novamente.');
-          return false;
-        }
-        return currentLoading;
-      });
-    }, 90000);
-
     console.time('loginProcess');
+
     try {
       console.log('Attempting sign in with:', loginEmail);
-      
-      const signIn = (pwd: string) =>
-        supabase.auth.signInWithPassword({
+
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        /* limpar estado local evita “lock” raro do cliente */
+      }
+
+      const signInViaBackend = async (pwd: string) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TOKEN_REQUEST_MS);
+        let response: Response;
+        try {
+          response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: loginEmail, password: pwd }),
+            signal: controller.signal,
+          });
+        } catch (fetchErr: unknown) {
+          clearTimeout(timeoutId);
+          const fe = fetchErr as { name?: string; message?: string };
+          if (fe?.name === 'AbortError') {
+            return { user: null, error: { message: 'LOGIN_TIMEOUT' } };
+          }
+          return { user: null, error: { message: fe?.message || 'NETWORK_ERROR' } };
+        }
+        clearTimeout(timeoutId);
+
+        const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          const errMsg =
+            (typeof payload.error === 'string' && payload.error) || 'Invalid login credentials';
+          return { user: null, error: { message: errMsg } };
+        }
+
+        return persistGrantSession(payload);
+      };
+
+      const tryDirectThenPersist = async (pwd: string) => {
+        const grant = await fetchPasswordGrant(loginEmail, pwd);
+        if (!grant.ok) {
+          return { user: null, error: { message: grant.errorMessage } };
+        }
+        return persistGrantSession(grant.payload);
+      };
+
+      let user: import('@supabase/supabase-js').User | null = null;
+      let authErr: { message: string } | null = null;
+
+      let attempt = await tryDirectThenPersist(password);
+      user = attempt.user;
+      authErr = attempt.error;
+
+      if (authErr && isRetryableMessage(authErr.message) && !isCredentialMessage(authErr.message)) {
+        attempt = await tryDirectThenPersist(password);
+        user = attempt.user;
+        authErr = attempt.error;
+      }
+
+      if (authErr && isRetryableMessage(authErr.message) && !isCredentialMessage(authErr.message)) {
+        attempt = await signInViaBackend(password);
+        user = attempt.user;
+        authErr = attempt.error;
+      }
+
+      if (authErr && isRetryableMessage(authErr.message) && !isCredentialMessage(authErr.message)) {
+        const { data, error: sdkErr } = await supabase.auth.signInWithPassword({
           email: loginEmail,
-          password: pwd,
+          password: password.trim(),
         });
+        if (sdkErr) {
+          authErr = { message: sdkErr.message };
+          user = null;
+        } else {
+          user = data.user;
+          authErr = null;
+        }
+      }
 
-      let { data: authData, error: authError } = await signIn(password);
-
-      console.log('Auth response received. Error:', authError?.message || 'None');
-      console.timeLog('loginProcess', 'Auth response received');
-
-      let finalAuthData = authData;
-      let finalAuthError = authError;
-
-      // Retry automático para casos comuns de espaço acidental no início/fim da senha.
       if (
-        finalAuthError?.message === 'Invalid login credentials' &&
+        authErr?.message === 'Invalid login credentials' &&
         password !== password.trim()
       ) {
-        const retryResult = await signIn(password.trim());
-        finalAuthData = retryResult.data;
-        finalAuthError = retryResult.error;
+        attempt = await tryDirectThenPersist(password.trim());
+        user = attempt.user;
+        authErr = attempt.error;
       }
 
-      // Retry para falha de rede transitória.
-      if (
-        finalAuthError?.message?.toLowerCase()?.includes('fetch') ||
-        finalAuthError?.message?.toLowerCase()?.includes('network')
-      ) {
-        const retryResult = await signIn(password.trim());
-        finalAuthData = retryResult.data;
-        finalAuthError = retryResult.error;
+      if (authErr) {
+        console.error('Auth Error Details:', authErr);
+        throw authErr;
       }
 
-      if (finalAuthError) {
-        console.error('Auth Error Details:', authError);
-        throw finalAuthError;
-      }
-
-      if (!finalAuthData.user) {
+      if (!user) {
         throw new Error('No user returned from auth');
       }
 
-      console.log('Fetching user doc for ID:', finalAuthData.user.id);
-      const { data: userDoc, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', finalAuthData.user.id)
-        .maybeSingle();
-      
-      console.log('User doc response received. Error:', userError?.message || 'None');
-      console.timeLog('loginProcess', 'User doc response received');
-      
-      if (userError) {
-        console.error('User doc fetch error:', userError);
-        throw new Error('Erro ao buscar perfil do usuário: ' + userError.message);
-      }
+      const fallbackName =
+        (user.user_metadata?.name as string | undefined) ||
+        (user.email?.split('@')[0] as string | undefined) ||
+        'Usuário';
+      const fallbackRole =
+        loginEmail === 'renan@reetech.com.br'
+          ? 'admin'
+          : ((user.user_metadata?.role as User['role'] | undefined) || 'client');
+      const tempUser: User = {
+        id: user.id,
+        email: user.email || loginEmail,
+        name: fallbackName,
+        role: fallbackRole,
+      };
+      onLogin(tempUser);
 
-      let finalUserDoc = userDoc;
-      if (!finalUserDoc) {
-        console.warn('User doc not found in public.users for ID:', finalAuthData.user.id, 'Creating a default profile...');
-        const fallbackName =
-          (finalAuthData.user.user_metadata?.name as string | undefined) ||
-          (finalAuthData.user.email?.split('@')[0] as string | undefined) ||
-          'Usuário';
+      const runWithTimeout = async <T,>(pending: PromiseLike<T>, timeoutMs: number) => {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('PROFILE_TIMEOUT')), timeoutMs)
+        );
+        return await Promise.race([Promise.resolve(pending), timeoutPromise]);
+      };
 
-        const { data: createdUser, error: createUserError } = await supabase
-          .from('users')
-          .insert({
-            id: finalAuthData.user.id,
-            email: finalAuthData.user.email,
-            name: fallbackName,
-            role: 'client',
-            createdAt: new Date().toISOString(),
-          })
-          .select('*')
-          .single();
+      (async () => {
+        try {
+          console.log('Fetching user doc for ID:', user.id);
+          const { data: userDoc, error: userError } = await runWithTimeout(
+            supabase
+              .from('users')
+              .select('id,name,email,role,organizationId,avatar,phone,whatsapp,observations,createdAt')
+              .eq('id', user.id)
+              .maybeSingle(),
+            12000
+          );
 
-        if (createUserError) {
-          throw new Error('Usuário autenticado, mas não foi possível criar perfil: ' + createUserError.message);
+          if (userError) {
+            console.error('User doc fetch error:', userError);
+            return;
+          }
+
+          if (userDoc) {
+            onLogin(userDoc as User);
+            return;
+          }
+
+          const { data: createdUser, error: createUserError } = await runWithTimeout(
+            supabase
+              .from('users')
+              .insert({
+                id: user.id,
+                email: user.email,
+                name: fallbackName,
+                role: fallbackRole,
+                createdAt: new Date().toISOString(),
+              })
+              .select('id,name,email,role,organizationId,avatar,phone,whatsapp,observations,createdAt')
+              .single(),
+            12000
+          );
+
+          if (!createUserError && createdUser) {
+            onLogin(createdUser as User);
+          }
+        } catch (bgErr) {
+          console.warn('Background profile sync failed:', bgErr);
         }
-
-        finalUserDoc = createdUser;
-      }
-
-      console.log('Login successful, calling onLogin');
-      onLogin(finalUserDoc as User);
-    } catch (err: any) {
+      })();
+    } catch (err: unknown) {
+      const e = err as { message?: string };
       console.error('Login catch block:', err);
-      if (err.message === 'Invalid login credentials') {
-        setError('Email ou senha inválidos. Verifique se a senha está correta.');
-      } else {
-        setError(err.message || 'Credenciais inválidas ou erro ao conectar.');
-      }
+      setError(humanizeAuthError(e?.message));
     } finally {
+      clearTimeout(uiFailsafeTimeout);
       console.timeEnd('loginProcess');
       console.log('Login process finished (finally)');
-      clearTimeout(loginTimeout);
       setLoading(false);
     }
   };
@@ -192,9 +382,16 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           {error && (
             <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-[10px] text-red-400 font-medium text-left">
               <p className="font-bold mb-1 uppercase tracking-tighter">Debug Info:</p>
-              <p className="opacity-70 break-all">URL: {import.meta.env.VITE_SUPABASE_URL ? String(import.meta.env.VITE_SUPABASE_URL) : "Não configurado"}</p>
+              {localServerUrls?.[0] && (
+                <p className="opacity-90 break-all mt-1">
+                  App local (use esta URL se a conexão falhar): <span className="text-discord-text">{localServerUrls[0]}</span>
+                </p>
+              )}
+              <p className="opacity-70 break-all mt-1">Supabase: {import.meta.env.VITE_SUPABASE_URL ? String(import.meta.env.VITE_SUPABASE_URL) : "Não configurado"}</p>
               <p className="opacity-70 mt-1">Key: {import.meta.env.VITE_SUPABASE_ANON_KEY ? "Configurada (oculta)" : "Não configurada"}</p>
-              <p className="opacity-70 mt-1">Se o erro for 401 "Access to schema is forbidden", verifique se as chaves no Supabase Dashboard não foram alteradas ou se o projeto não foi resetado.</p>
+              <p className="opacity-70 mt-1">
+                Use <code className="text-discord-muted">npm run dev</code> e a URL que o terminal mostrar (porta pode ser 3001 se 3000 estiver ocupada).
+              </p>
             </div>
           )}
         </div>
