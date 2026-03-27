@@ -17,15 +17,15 @@ export const TicketCard: React.FC<TicketCardProps> = ({ ticket, onClick }) => {
       onClick={onClick}
       className="bg-discord-darker hover:bg-discord-hover border border-discord-border rounded-xl p-4 cursor-pointer transition-all duration-200 group"
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] font-black text-discord-muted bg-discord-darkest px-2 py-1 rounded border border-discord-border tracking-tighter">
+      <div className="flex items-start justify-between gap-2 mb-3 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <span className="text-[10px] font-black text-discord-muted bg-discord-darkest px-2 py-1 rounded border border-discord-border tracking-tighter shrink-0">
             {ticket.number}
           </span>
-          <StatusBadge status={ticket.status} />
-          <UrgencyBadge urgency={ticket.urgency} />
+          <StatusBadge status={ticket.status} className="shrink-0" />
+          <UrgencyBadge urgency={ticket.urgency} className="shrink-0" />
         </div>
-        <ChevronRight className="w-4 h-4 text-discord-muted group-hover:text-discord-accent transition-colors" />
+        <ChevronRight className="w-4 h-4 text-discord-muted group-hover:text-discord-accent transition-colors shrink-0 mt-0.5" />
       </div>
 
       <h3 className="text-discord-text font-bold text-base mb-1 line-clamp-1">{ticket.subject}</h3>

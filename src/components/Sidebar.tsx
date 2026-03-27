@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+import { isAnyAdministrator, isTtickettAdministrator } from '../lib/roles';
 import { AvatarDisplay } from './AvatarDisplay';
 
 interface SidebarProps {
@@ -25,14 +26,24 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ user, activeTab, setActiveTab, onLogout, isOpen, onClose }) => {
   const isAgent = user.role === 'agent';
-  const isAdmin = user.role === 'admin';
-  const canManage = isAgent || isAdmin;
+  const isElevatedAdmin = isAnyAdministrator(user.role);
+  const canManage = isAgent || isElevatedAdmin;
 
   const menuItems = [
-    { id: 'dashboard', label: isAdmin ? 'Todos os Tickets' : (isAgent ? 'Central de Atendimento' : 'Meus Tickets'), icon: TicketIcon },
+    {
+      id: 'dashboard',
+      label: isTtickettAdministrator(user.role)
+        ? 'Todos os Tickets'
+        : user.role === 'admin'
+          ? 'Tickets da Empresa'
+          : isAgent
+            ? 'Central de Atendimento'
+            : 'Meus Tickets',
+      icon: TicketIcon,
+    },
     { id: 'new-ticket', label: 'Novo Ticket', icon: PlusCircle, hidden: isAgent },
-    { id: 'registrations', label: 'Cadastros', icon: Database, hidden: !isAdmin },
-    { id: 'reports', label: 'Relatórios', icon: BarChart3, hidden: !isAdmin },
+    { id: 'registrations', label: 'Cadastros', icon: Database, hidden: !isElevatedAdmin },
+    { id: 'reports', label: 'Relatórios', icon: BarChart3, hidden: !isElevatedAdmin },
     { id: 'settings', label: 'Configurações', icon: Settings },
   ];
 
@@ -47,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activeTab, setActiveTab,
       )}
       
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 bg-discord-sidebar flex flex-col h-screen border-r border-discord-border transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0",
+        "fixed inset-y-0 left-0 z-50 w-[min(16rem,85vw)] md:w-64 shrink-0 bg-discord-sidebar flex flex-col h-full min-h-0 max-h-[100dvh] border-r border-discord-border transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-4 border-b border-discord-border flex items-center justify-between">
@@ -87,7 +98,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activeTab, setActiveTab,
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold text-discord-text truncate">{user.name}</p>
               <p className="text-[10px] text-discord-muted truncate uppercase tracking-wider">
-                {user.role === 'admin' ? 'Administrador' : (user.role === 'agent' ? 'Atendente' : 'Cliente')}
+                {user.role === 'ttickett_admin'
+                  ? 'Admin. TTICKETT'
+                  : user.role === 'admin'
+                    ? 'Administrador'
+                    : user.role === 'agent'
+                      ? 'Atendente'
+                      : 'Cliente'}
               </p>
             </div>
           </div>

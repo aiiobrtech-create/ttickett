@@ -1,6 +1,7 @@
 import React from 'react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+import { isStaffRole } from '../lib/roles';
 
 interface AvatarDisplayProps {
   user: User;
@@ -9,7 +10,7 @@ interface AvatarDisplayProps {
 }
 
 export const AvatarDisplay: React.FC<AvatarDisplayProps> = ({ user, className, showBadge = true }) => {
-  const isStaff = user.role === 'agent' || user.role === 'admin';
+  const isStaff = isStaffRole(user.role);
   const [imgError, setImgError] = React.useState(false);
 
   const initials = user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);

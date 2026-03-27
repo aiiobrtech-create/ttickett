@@ -1,6 +1,7 @@
 import React from 'react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+import { isStaffRole } from '../lib/roles';
 
 interface AvatarSelectorProps {
   currentUser: User;
@@ -12,7 +13,7 @@ const MALE_SEEDS = Array.from({ length: 10 }, (_, i) => `M${i + 1}`);
 const FEMALE_SEEDS = Array.from({ length: 10 }, (_, i) => `F${i + 1}`);
 
 export const AvatarSelector: React.FC<AvatarSelectorProps> = ({ currentUser, onSelect, onClose }) => {
-  const isStaff = currentUser.role === 'agent' || currentUser.role === 'admin';
+  const isStaff = isStaffRole(currentUser.role);
   const accentColor = '5865F2'; // Default accent color
 
   const getAvatarUrl = (seed: string) => {

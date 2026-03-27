@@ -11,9 +11,17 @@ export type TicketUrgency = 'Baixa' | 'Média' | 'Alta' | 'Crítica';
 
 export type Platform = string;
 
+export interface Company {
+  id: string;
+  name: string;
+  observations?: string;
+  createdAt?: Date;
+}
+
 export interface Organization {
   id: string;
   name: string;
+  companyId?: string;
   platforms: string[];
   categories: string[];
   address?: string;
@@ -49,7 +57,7 @@ export interface AccessLog {
 export interface Message {
   id: string;
   author: string;
-  authorRole: 'client' | 'agent' | 'admin';
+  authorRole: 'client' | 'agent' | 'admin' | 'ttickett_admin';
   content: string;
   timestamp: Date;
   isInternal?: boolean;
@@ -65,7 +73,9 @@ export interface Ticket {
   number: string;
   requester: string;
   requesterEmail: string;
+  requesterUid?: string;
   organizationId?: string;
+  companyId?: string;
   platform: Platform;
   category?: string;
   subject: string;
@@ -88,9 +98,13 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'client' | 'agent' | 'admin';
+  role: 'client' | 'agent' | 'admin' | 'ttickett_admin';
   avatar?: string;
+  companyId?: string;
+  /** Legado (single-org). Manter até remover do banco. */
   organizationId?: string;
+  /** Novo escopo multi-org (se vazio/undefined, acesso global conforme papel). */
+  organizationIds?: string[];
   phone?: string;
   whatsapp?: string;
   observations?: string;

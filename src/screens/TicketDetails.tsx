@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, User as UserIcon, ShieldCheck, Clock, Monitor, ChevronLeft, X, FileText, Image as ImageIcon, Tag, Building2, Printer } from 'lucide-react';
+import { Send, Paperclip, User as UserIcon, ShieldCheck, Clock, Monitor, ChevronLeft, X, FileText, Image as ImageIcon, Tag, Building2, Landmark, Printer, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
-import { Ticket, User, TicketStatus, Message, Organization } from '../types';
+import { Ticket, User, TicketStatus, Message, Organization, Company } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { UrgencyBadge } from '../components/UrgencyBadge';
 import { cn } from '../lib/utils';
+import { isAnyAdministrator, isStaffLikeRole } from '../lib/roles';
 import { printTicketPDF } from '../lib/exportUtils';
 import { supabase, uploadFile } from '../supabase';
 
@@ -18,6 +19,7 @@ interface TicketDetailsProps {
   onAddMessage: (content: string, isInternal: boolean, attachment?: { name: string; url: string; type: 'image' | 'file' }) => void;
   onUpdateAssignee: (assignee: string) => void;
   onUpdateEstimatedDeadline?: (date: Date | undefined) => void;
+  onDeleteTicket?: () => Promise<void>;
   onNavigateToRegistration: (type: string, item: any, mode: string) => void;
 }
 
@@ -29,15 +31,19 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
   onAddMessage,
   onUpdateAssignee,
   onUpdateEstimatedDeadline,
+  onDeleteTicket,
   onNavigateToRegistration
 }) => {
   const [newMessage, setNewMessage] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isInternal, setIsInternal] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ name: string; url: string; type: 'image' | 'file' } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
@@ -46,6 +52,10 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
         const { data: orgs, error: orgsError } = await supabase.from('organizations').select('*');
         if (orgsError) console.error('[TicketDetails] Error fetching organizations:', orgsError);
         setOrganizations(orgs || []);
+
+        const { data: comps, error: compsError } = await supabase.from('companies').select('*');
+        if (compsError) console.error('[TicketDetails] Error fetching companies:', compsError);
+        setCompanies(comps || []);
         
         const { data: usersData, error: usersError } = await supabase.from('users').select('*');
         if (usersError) console.error('[TicketDetails] Error fetching users:', usersError);
@@ -58,9 +68,13 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
   }, []);
 
   const organization = organizations.find(org => org.id === ticket.organizationId);
+  const company =
+    (ticket.companyId && companies.find((c) => c.id === ticket.companyId)) ||
+    (organization?.companyId && companies.find((c) => c.id === organization.companyId)) ||
+    null;
   const isAgent = currentUser.role === 'agent';
-  const isAdmin = currentUser.role === 'admin';
-  const canManage = isAgent || isAdmin;
+  const canManage = isAgent || isAnyAdministrator(currentUser.role);
+  const canEditScope = false;
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,6 +107,17 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
 
   const statuses: TicketStatus[] = ['Aberto', 'Pendente', 'Em atendimento', 'Resolvido', 'Fechado', 'Cancelado'];
 
+  const handleConfirmDelete = async () => {
+    if (!onDeleteTicket) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteTicket();
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-discord-dark">
       {/* Header */}
@@ -113,7 +138,7 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto ml-10 sm:ml-0">
+        <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto w-full sm:w-auto justify-end sm:justify-start min-w-0">
           <button 
             onClick={() => {
               printTicketPDF(ticket);
@@ -125,15 +150,50 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
             <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4 group-hover:text-discord-accent transition-colors" />
             <span className="hidden sm:inline">Imprimir PDF</span>
           </button>
+          {canManage && onDeleteTicket && (
+            <>
+              {!deleteConfirmOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] sm:text-xs font-bold uppercase tracking-widest rounded border border-red-500/30 transition-all"
+                  title="Excluir ticket"
+                >
+                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Excluir</span>
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg border border-red-500/40 bg-red-500/5">
+                  <span className="text-[10px] text-discord-text font-medium px-1">Excluir {ticket.number}?</span>
+                  <button
+                    type="button"
+                    disabled={isDeleting}
+                    onClick={() => setDeleteConfirmOpen(false)}
+                    className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-discord-muted hover:text-discord-text rounded border border-discord-border"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeleting}
+                    onClick={() => void handleConfirmDelete()}
+                    className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white bg-red-600 hover:bg-red-500 rounded disabled:opacity-50"
+                  >
+                    {isDeleting ? 'Excluindo…' : 'Confirmar'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
           <UrgencyBadge urgency={ticket.urgency} className="text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1" />
           <StatusBadge status={ticket.status} className="text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1" />
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0 order-2 lg:order-1 border-t lg:border-t-0 border-discord-border">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-32 space-y-6 sm:space-y-8">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        {/* Chat Area — min-h-0 para o scroll interno respeitar a altura disponível */}
+        <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col border-t border-discord-border lg:order-1 lg:border-t-0">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4 pb-6 sm:p-6 space-y-6 sm:space-y-8">
             {/* Original Description */}
             <div className="flex gap-4 group">
               <div className="w-10 h-10 rounded-full bg-discord-accent flex items-center justify-center shrink-0">
@@ -201,21 +261,21 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
               )}>
                 <div className={cn(
                   "w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0",
-                  msg.authorRole === 'agent' || msg.authorRole === 'admin' ? "bg-discord-accent" : "bg-zinc-700"
+                  isStaffLikeRole(msg.authorRole) ? "bg-discord-accent" : "bg-zinc-700"
                 )}>
-                  {msg.authorRole === 'agent' || msg.authorRole === 'admin' ? <ShieldCheck className="text-white w-4 h-4 sm:w-6 sm:h-6" /> : <UserIcon className="text-white w-4 h-4 sm:w-6 sm:h-6" />}
+                  {isStaffLikeRole(msg.authorRole) ? <ShieldCheck className="text-white w-4 h-4 sm:w-6 sm:h-6" /> : <UserIcon className="text-white w-4 h-4 sm:w-6 sm:h-6" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-baseline gap-2 mb-1">
                     <span className={cn(
                       "font-bold hover:underline cursor-pointer text-sm sm:text-base",
-                      msg.authorRole === 'agent' || msg.authorRole === 'admin' ? "text-discord-accent" : "text-discord-text"
+                      isStaffLikeRole(msg.authorRole) ? "text-discord-accent" : "text-discord-text"
                     )}>
                       {msg.author}
                     </span>
-                    {(msg.authorRole === 'agent' || msg.authorRole === 'admin') && (
+                    {isStaffLikeRole(msg.authorRole) && (
                       <span className="bg-discord-accent/20 text-discord-accent text-[8px] sm:text-[9px] font-black px-1 rounded uppercase tracking-tighter">
-                        {msg.authorRole === 'admin' ? 'Admin' : 'Atendente'}
+                        {msg.authorRole === 'ttickett_admin' ? 'TTICKETT' : msg.authorRole === 'admin' ? 'Admin' : 'Atendente'}
                       </span>
                     )}
                     {msg.isInternal && (
@@ -276,8 +336,8 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
             ))}
           </div>
 
-          {/* Input Area */}
-          <div className="p-4 bg-discord-dark border-t border-discord-border">
+          {/* Input Area — shrink-0 permanece abaixo da área de scroll, sem sobrepor */}
+          <div className="shrink-0 border-t border-discord-border bg-discord-dark p-3 sm:p-4">
             {selectedFile && (
               <div className="mb-3 p-3 bg-discord-darkest rounded-lg border border-discord-accent/30 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2">
                 <div className="w-10 h-10 rounded bg-discord-dark flex items-center justify-center shrink-0">
@@ -328,7 +388,7 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
             <form 
               onSubmit={handleSendMessage}
               className={cn(
-                "bg-discord-darkest rounded-lg flex items-center gap-3 px-4 py-3 focus-within:ring-1 transition-all",
+                "bg-discord-darkest rounded-lg flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 min-w-0 focus-within:ring-1 transition-all",
                 isInternal ? "focus-within:ring-amber-500 border border-amber-500/30" : "focus-within:ring-discord-accent"
               )}
             >
@@ -358,12 +418,12 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 placeholder={selectedFile ? "Adicione um comentário ou envie..." : `Responder para ${ticket.requester}...`}
-                className="flex-1 bg-transparent border-none text-discord-text placeholder:text-discord-muted text-sm outline-none"
+                className="flex-1 min-w-0 basis-[8rem] sm:basis-auto bg-transparent border-none text-discord-text placeholder:text-discord-muted text-sm outline-none"
               />
               <button 
                 type="submit"
                 disabled={!newMessage.trim() && !selectedFile}
-                className="text-discord-accent disabled:text-discord-muted transition-colors"
+                className="text-discord-accent disabled:text-discord-muted transition-colors shrink-0 ml-auto sm:ml-0"
               >
                 <Send className="w-5 h-5" />
               </button>
@@ -372,8 +432,8 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
         </div>
 
         {/* Sidebar Info */}
-        <div className="w-full lg:w-72 bg-discord-darkest border-t lg:border-t-0 lg:border-l border-discord-border overflow-y-auto order-1 lg:order-2 shrink-0">
-          <div className="p-4 sm:p-6 space-y-6 sm:space-y-8 flex flex-col sm:flex-row lg:flex-col gap-6 sm:gap-8 lg:gap-0">
+        <div className="order-1 flex max-h-[42vh] min-h-0 w-full shrink-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-t border-discord-border bg-discord-darkest lg:order-2 lg:max-h-none lg:w-72 lg:border-l lg:border-t-0">
+          <div className="flex flex-col gap-6 p-4 sm:flex-row sm:gap-8 sm:p-6 lg:flex-col lg:gap-0 lg:space-y-8">
             <div className="flex-1">
               <h3 className="text-xs font-black text-discord-muted uppercase tracking-widest mb-3 sm:mb-4">Informações</h3>
               <div className="space-y-3 sm:space-y-4">
@@ -385,8 +445,15 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
-                  <Building2 className="w-4 h-4 text-discord-muted mt-0.5 shrink-0" />
+                  <Landmark className="w-4 h-4 text-discord-muted mt-0.5 shrink-0" />
                   <div className="min-w-0">
+                    <p className="text-[10px] text-discord-muted font-bold uppercase tracking-wider">Empresa</p>
+                    <p className="text-sm text-discord-text font-medium truncate">{company?.name || 'Não definida'}</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Building2 className="w-4 h-4 text-discord-muted mt-0.5 shrink-0" />
+                  <div className="min-w-0 w-full">
                     <p className="text-[10px] text-discord-muted font-bold uppercase tracking-wider">Organização</p>
                     <p className="text-sm text-discord-text font-medium truncate">{organization?.name || 'Não definida'}</p>
                     {canManage && organization && (
@@ -479,7 +546,7 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
                         className="w-full bg-discord-dark border border-discord-border rounded-md p-2 text-xs text-discord-text outline-none focus:ring-1 focus:ring-discord-accent"
                       >
                         <option value="">Sem responsável</option>
-                        {users.filter(u => u.role === 'agent' || u.role === 'admin').map(u => (
+                        {users.filter(u => isStaffLikeRole(u.role)).map(u => (
                           <option key={u.id} value={u.name}>{u.name}</option>
                         ))}
                       </select>

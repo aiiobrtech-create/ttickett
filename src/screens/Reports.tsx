@@ -22,11 +22,12 @@ import {
   exportCategoriesToPDF
 } from '../lib/exportUtils';
 import { supabase } from '../supabase';
-import { Ticket, User, Organization, PlatformType, CategoryType, AccessLog } from '../types';
+import { Ticket, User, Organization, Company, PlatformType, CategoryType, AccessLog } from '../types';
 
 export const Reports: React.FC = () => {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [platforms, setPlatforms] = useState<PlatformType[]>([]);
   const [categories, setCategories] = useState<CategoryType[]>([]);
@@ -46,6 +47,9 @@ export const Reports: React.FC = () => {
 
         const { data: users } = await supabase.from('users').select('*');
         setUsers(users || []);
+
+        const { data: comps } = await supabase.from('companies').select('*');
+        setCompanies(comps || []);
 
         const { data: orgs } = await supabase.from('organizations').select('*');
         setOrganizations(orgs || []);
@@ -152,7 +156,7 @@ export const Reports: React.FC = () => {
         {
           label: 'Exportar PDF',
           icon: FileText,
-          onClick: () => exportOrganizationsToPDF(organizations, 'Relatório de Organizações')
+          onClick: () => exportOrganizationsToPDF(organizations, 'Relatório de Organizações', companies)
         }
       ]
     },
@@ -241,8 +245,8 @@ export const Reports: React.FC = () => {
   ];
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto bg-discord-darkest p-4 md:p-8 pb-24 md:pb-32">
-      <div className="max-w-6xl mx-auto">
+    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-discord-darkest p-3 sm:p-4 md:p-8 pb-24 md:pb-32">
+      <div className="max-w-6xl mx-auto w-full min-w-0">
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-discord-text">Central de Relatórios</h2>
           <p className="text-discord-muted mt-1">Gere e exporte dados gerenciais de todas as rotinas do sistema.</p>
@@ -281,8 +285,8 @@ export const Reports: React.FC = () => {
           ))}
         </div>
 
-        <div className="mt-12 p-8 bg-discord-accent/5 rounded-2xl border border-discord-accent/20 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="text-center md:text-left">
+        <div className="mt-12 p-4 sm:p-8 bg-discord-accent/5 rounded-2xl border border-discord-accent/20 flex flex-col md:flex-row md:items-center md:justify-between gap-6 min-w-0">
+          <div className="text-center md:text-left min-w-0">
             <h3 className="text-xl font-bold text-discord-text">Exportação Completa</h3>
             <p className="text-discord-muted mt-1">Deseja um backup completo de todos os dados de cadastro?</p>
           </div>
@@ -297,7 +301,7 @@ export const Reports: React.FC = () => {
               exportToExcel(allData, 'Backup_Geral_Sistema');
               toast.success('Backup geral exportado com sucesso!');
             }}
-            className="px-8 py-3 bg-discord-accent text-white font-bold uppercase tracking-widest rounded-lg hover:bg-discord-accent/90 transition-all flex items-center gap-3 shadow-lg shadow-discord-accent/20"
+            className="w-full md:w-auto px-6 md:px-8 py-3 bg-discord-accent text-white font-bold uppercase tracking-widest rounded-lg hover:bg-discord-accent/90 transition-all flex items-center justify-center gap-3 shadow-lg shadow-discord-accent/20 shrink-0"
           >
             <Download className="w-5 h-5" />
             Exportar Tudo (Excel)

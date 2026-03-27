@@ -184,7 +184,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Cargo</label>
                   <input 
                     disabled
-                    defaultValue={currentUser.role === 'admin' ? 'ADMINISTRADOR' : currentUser.role === 'agent' ? 'ATENDENTE' : 'CLIENTE'}
+                    defaultValue={currentUser.role === 'ttickett_admin' ? 'ADMIN. TTICKETT' : currentUser.role === 'admin' ? 'ADMINISTRADOR (EMPRESA)' : currentUser.role === 'agent' ? 'ATENDENTE' : 'CLIENTE'}
                     className="w-full bg-discord-darkest/50 border border-discord-border rounded-md p-3 text-sm text-discord-muted outline-none cursor-not-allowed"
                   />
                 </div>

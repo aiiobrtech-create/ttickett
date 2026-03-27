@@ -257,7 +257,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         'Usuário';
       const fallbackRole =
         loginEmail === 'renan@reetech.com.br'
-          ? 'admin'
+          ? 'ttickett_admin'
           : ((user.user_metadata?.role as User['role'] | undefined) || 'client');
       const tempUser: User = {
         id: user.id,
@@ -280,7 +280,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           const { data: userDoc, error: userError } = await runWithTimeout(
             supabase
               .from('users')
-              .select('id,name,email,role,organizationId,avatar,phone,whatsapp,observations,createdAt')
+              .select('id,name,email,role,organizationId,companyId,avatar,phone,whatsapp,observations,createdAt')
               .eq('id', user.id)
               .maybeSingle(),
             12000
@@ -292,7 +292,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           }
 
           if (userDoc) {
-            onLogin(userDoc as User);
+            const { data: mem } = await supabase
+              .from('user_organizations')
+              .select('"organizationId"')
+              .eq('userId', userDoc.id);
+            const organizationIds = (mem || []).map((r: any) => r.organizationId).filter(Boolean);
+            onLogin({ ...(userDoc as User), organizationIds });
             return;
           }
 
@@ -306,13 +311,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 role: fallbackRole,
                 createdAt: new Date().toISOString(),
               })
-              .select('id,name,email,role,organizationId,avatar,phone,whatsapp,observations,createdAt')
+              .select('id,name,email,role,organizationId,companyId,avatar,phone,whatsapp,observations,createdAt')
               .single(),
             12000
           );
 
           if (!createUserError && createdUser) {
-            onLogin(createdUser as User);
+            onLogin({ ...(createdUser as User), organizationIds: [] });
           }
         } catch (bgErr) {
           console.warn('Background profile sync failed:', bgErr);

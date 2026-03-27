@@ -45,6 +45,12 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient(supabaseUrl || "https://placeholder.supabase.co", supabaseKey || "placeholder");
+const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+const supabaseAnon = createClient(
+  supabaseUrl || "https://placeholder.supabase.co",
+  anonKey || "placeholder",
+  { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+);
 
 // Test Supabase connection on startup
 async function testSupabaseConnection() {
@@ -127,6 +133,175 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
     return res.status(500).json({ error: error?.message || "NETWORK_ERROR" });
   } finally {
     clearTimeout(timeoutId);
+  }
+});
+
+app.post("/api/admin/delete-user", async (req: Request, res: Response) => {
+  const authHeader = String(req.headers.authorization || "");
+  const token = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  const targetUserId = String(req.body?.userId || "").trim();
+
+  if (!token) return res.status(401).json({ error: "Token ausente." });
+  if (!targetUserId) return res.status(400).json({ error: "userId é obrigatório." });
+  if (!supabaseUrl || !anonKey) return res.status(500).json({ error: "Supabase não configurado no backend." });
+
+  const usingServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!usingServiceRole) {
+    return res.status(500).json({
+      error:
+        "SUPABASE_SERVICE_ROLE_KEY não configurada no backend. Não é possível excluir usuário do Auth do Supabase.",
+    });
+  }
+
+  try {
+    const { data: authData, error: authErr } = await supabaseAnon.auth.getUser(token);
+    if (authErr || !authData?.user?.id) {
+      return res.status(401).json({ error: "Token inválido." });
+    }
+
+    const requesterId = authData.user.id;
+    const { data: requesterRow, error: reqDbErr } = await supabase
+      .from("users")
+      .select('id,role,"companyId"')
+      .eq("id", requesterId)
+      .maybeSingle();
+
+    if (reqDbErr || !requesterRow) {
+      return res.status(403).json({ error: "Sem permissão (perfil não encontrado)." });
+    }
+
+    const requesterRole = String((requesterRow as any).role || "");
+    const requesterCompanyId = (requesterRow as any).companyId as string | null | undefined;
+
+    const isTtickettAdmin = requesterRole === "ttickett_admin";
+    const isCompanyAdmin = requesterRole === "admin";
+
+    if (!isTtickettAdmin && !isCompanyAdmin) {
+      return res.status(403).json({ error: "Sem permissão para excluir usuários." });
+    }
+
+    if (isCompanyAdmin) {
+      if (!requesterCompanyId) {
+        return res.status(403).json({ error: "Administrador sem companyId configurado." });
+      }
+
+      const { data: targetRow, error: targetErr } = await supabase
+        .from("users")
+        .select('id,role,"companyId","organizationId"')
+        .eq("id", targetUserId)
+        .maybeSingle();
+
+      if (targetErr || !targetRow) {
+        return res.status(404).json({ error: "Usuário alvo não encontrado." });
+      }
+
+      const targetRole = String((targetRow as any).role || "");
+      if (targetRole === "ttickett_admin") {
+        return res.status(403).json({ error: "Não é permitido excluir Administrador TTICKETT." });
+      }
+
+      const targetCompanyId = (targetRow as any).companyId as string | null | undefined;
+      const targetOrgId = (targetRow as any).organizationId as string | null | undefined;
+
+      let sameCompany = targetCompanyId != null && targetCompanyId === requesterCompanyId;
+      if (!sameCompany && targetOrgId) {
+        const { data: orgRow } = await supabase
+          .from("organizations")
+          .select('id,"companyId"')
+          .eq("id", targetOrgId)
+          .maybeSingle();
+        sameCompany = !!orgRow?.companyId && orgRow.companyId === requesterCompanyId;
+      }
+
+      if (!sameCompany) {
+        return res.status(403).json({ error: "Você só pode excluir usuários da sua empresa." });
+      }
+    }
+
+    // 1) Exclui do Auth
+    const { error: authDeleteErr } = await supabase.auth.admin.deleteUser(targetUserId);
+    if (authDeleteErr) {
+      return res.status(500).json({ error: authDeleteErr.message || "Falha ao excluir no Auth." });
+    }
+
+    // 2) Limpa a linha do app (caso não exista cascade)
+    const { error: dbDeleteErr } = await supabase.from("users").delete().eq("id", targetUserId);
+    if (dbDeleteErr) {
+      // não falhar a requisição inteira: o Auth já foi excluído
+      return res.status(200).json({ ok: true, warning: dbDeleteErr.message });
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (e: any) {
+    console.error("[delete-user] error:", e?.message || e);
+    return res.status(500).json({ error: e?.message || "Erro inesperado." });
+  }
+});
+
+app.post("/api/admin/reconcile-auth-users", async (req: Request, res: Response) => {
+  const authHeader = String(req.headers.authorization || "");
+  const token = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+
+  if (!token) return res.status(401).json({ error: "Token ausente." });
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(500).json({ error: "SUPABASE_SERVICE_ROLE_KEY não configurada no backend." });
+  }
+
+  try {
+    const { data: authData, error: authErr } = await supabaseAnon.auth.getUser(token);
+    if (authErr || !authData?.user?.id) return res.status(401).json({ error: "Token inválido." });
+
+    const requesterId = authData.user.id;
+    const { data: requesterRow, error: reqDbErr } = await supabase
+      .from("users")
+      .select("id,role")
+      .eq("id", requesterId)
+      .maybeSingle();
+    if (reqDbErr || !requesterRow) return res.status(403).json({ error: "Sem permissão." });
+
+    const requesterRole = String((requesterRow as any).role || "");
+    if (requesterRole !== "ttickett_admin") {
+      return res.status(403).json({ error: "Apenas Administrador TTICKETT pode sincronizar usuários." });
+    }
+
+    const deleted: Array<{ id: string; email: string | null }> = [];
+    const kept: number[] = [];
+
+    let page = 1;
+    const perPage = 1000;
+
+    // paginar auth users
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+      if (error) return res.status(500).json({ error: error.message || "Falha ao listar usuários do Auth." });
+      const authUsers = data?.users || [];
+      if (!authUsers.length) break;
+
+      const ids = authUsers.map((u) => u.id);
+      const { data: existingRows, error: existErr } = await supabase
+        .from("users")
+        .select("id")
+        .in("id", ids);
+      if (existErr) return res.status(500).json({ error: existErr.message || "Falha ao checar tabela users." });
+
+      const existing = new Set((existingRows || []).map((r: any) => r.id));
+      const toDelete = authUsers.filter((u) => !existing.has(u.id));
+
+      for (const u of toDelete) {
+        const { error: delErr } = await supabase.auth.admin.deleteUser(u.id);
+        if (!delErr) deleted.push({ id: u.id, email: u.email ?? null });
+      }
+
+      kept.push(authUsers.length - toDelete.length);
+      if (authUsers.length < perPage) break;
+      page += 1;
+    }
+
+    return res.status(200).json({ ok: true, deletedCount: deleted.length, deleted, pages: page });
+  } catch (e: any) {
+    console.error("[reconcile-auth-users] error:", e?.message || e);
+    return res.status(500).json({ error: e?.message || "Erro inesperado." });
   }
 });
 

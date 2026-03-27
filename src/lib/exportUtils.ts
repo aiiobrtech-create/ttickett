@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Ticket, User, Organization, AccessLog, PlatformType, CategoryType } from '../types';
+import { Ticket, User, Organization, Company, AccessLog, PlatformType, CategoryType } from '../types';
 
 export const exportPlatformsToPDF = (platforms: PlatformType[], title: string) => {
   const doc = new jsPDF();
@@ -140,7 +140,13 @@ export const exportUsersToPDF = (users: User[], title: string) => {
   const tableData = users.map(u => [
     u.name,
     u.email,
-    u.role === 'admin' ? 'Administrador' : u.role === 'agent' ? 'Atendente' : 'Cliente',
+    u.role === 'ttickett_admin'
+      ? 'Administrador TTICKETT'
+      : u.role === 'admin'
+        ? 'Administrador (empresa)'
+        : u.role === 'agent'
+          ? 'Atendente'
+          : 'Cliente',
     u.phone || '-',
     u.whatsapp || '-'
   ]);
@@ -156,26 +162,67 @@ export const exportUsersToPDF = (users: User[], title: string) => {
   doc.save(`Relatorio_Usuarios_${format(new Date(), 'yyyy-MM-dd_HHmm')}.pdf`);
 };
 
-export const exportOrganizationsToPDF = (orgs: Organization[], title: string) => {
+export const exportCompaniesToPDF = (companies: Company[], title: string) => {
   const doc = new jsPDF();
-  
+
   doc.setFontSize(18);
   doc.text(title, 14, 22);
   doc.setFontSize(11);
   doc.setTextColor(100);
   doc.text(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 30);
 
-  const tableData = orgs.map(o => [
-    o.name,
-    o.contactPerson || '-',
-    o.email || '-',
-    o.phone || '-',
-    o.platforms.length.toString()
-  ]);
+  const tableData = companies.map((c) => [c.name, c.observations || '-']);
 
   autoTable(doc, {
     startY: 40,
-    head: [['Nome', 'Contato', 'E-mail', 'Telefone', 'Plataformas']],
+    head: [['Nome', 'Observações']],
+    body: tableData,
+    theme: 'striped',
+    headStyles: { fillColor: [88, 101, 242] },
+  });
+
+  doc.save(`Relatorio_Empresas_${format(new Date(), 'yyyy-MM-dd_HHmm')}.pdf`);
+};
+
+export const exportOrganizationsToPDF = (
+  orgs: Organization[],
+  title: string,
+  companies?: Company[]
+) => {
+  const doc = new jsPDF();
+
+  const companyName = (cid?: string) =>
+    cid && companies?.length ? companies.find((c) => c.id === cid)?.name || '-' : '-';
+
+  doc.setFontSize(18);
+  doc.text(title, 14, 22);
+  doc.setFontSize(11);
+  doc.setTextColor(100);
+  doc.text(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 30);
+
+  const withCompanyCol = !!companies?.length;
+  const tableData = withCompanyCol
+    ? orgs.map((o) => [
+        o.name,
+        companyName(o.companyId),
+        o.contactPerson || '-',
+        o.email || '-',
+        o.phone || '-',
+        o.platforms.length.toString(),
+      ])
+    : orgs.map((o) => [
+        o.name,
+        o.contactPerson || '-',
+        o.email || '-',
+        o.phone || '-',
+        o.platforms.length.toString(),
+      ]);
+
+  autoTable(doc, {
+    startY: 40,
+    head: withCompanyCol
+      ? [['Nome', 'Empresa', 'Contato', 'E-mail', 'Telefone', 'Plataformas']]
+      : [['Nome', 'Contato', 'E-mail', 'Telefone', 'Plataformas']],
     body: tableData,
     theme: 'striped',
     headStyles: { fillColor: [88, 101, 242] },

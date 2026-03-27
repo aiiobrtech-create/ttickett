@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Monitor, FileText, X, Upload, Image as ImageIcon, Trash2, Tag } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Send, Monitor, FileText, X, Upload, Image as ImageIcon, Trash2, Tag, Building2, Landmark } from 'lucide-react';
 import { toast } from 'sonner';
-import { Platform, User, TicketUrgency, Organization, PlatformType, CategoryType } from '../types';
+import { Platform, User, TicketUrgency, Organization, PlatformType, CategoryType, Company } from '../types';
 import { cn } from '../lib/utils';
+import { isTtickettAdministrator } from '../lib/roles';
 import { supabase, uploadFile } from '../supabase';
 
 interface NewTicketProps {
@@ -14,12 +15,16 @@ interface NewTicketProps {
     platform: Platform;
     category: string;
     urgency: TicketUrgency;
-    attachment?: { name: string; url: string; type: 'image' | 'file' }
+    attachment?: { name: string; url: string; type: 'image' | 'file' };
+    organizationId?: string | null;
   }) => void;
 }
 
 export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onSubmit }) => {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState('');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [platformsData, setPlatformsData] = useState<PlatformType[]>([]);
   const [categoriesData, setCategoriesData] = useState<CategoryType[]>([]);
 
@@ -28,6 +33,9 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
       try {
         const { data: orgs, error: orgsError } = await supabase.from('organizations').select('*');
         if (orgsError) console.error('[NewTicket] Error fetching organizations:', orgsError);
+
+        const { data: comps, error: compsError } = await supabase.from('companies').select('*');
+        if (compsError) console.error('[NewTicket] Error fetching companies:', compsError);
         
         const { data: platforms, error: platformsError } = await supabase.from('platforms').select('*');
         if (platformsError) console.error('[NewTicket] Error fetching platforms:', platformsError);
@@ -36,6 +44,7 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
         if (categoriesError) console.error('[NewTicket] Error fetching categories:', categoriesError);
         
         if (orgs) setOrganizations(orgs);
+        if (comps) setCompanies(comps);
         if (platforms) setPlatformsData(platforms);
         if (categories) setCategoriesData(categories);
       } catch (err: any) {
@@ -45,9 +54,57 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
     fetchData();
   }, []);
 
-  const userOrg = currentUser.organizationId 
-    ? organizations.find(org => org.id === currentUser.organizationId)
-    : null;
+  const isSuper = isTtickettAdministrator(currentUser.role);
+
+  const visibleOrgs = useMemo(() => {
+    if (isSuper) {
+      return organizations.filter((o) => !selectedCompanyId || o.companyId === selectedCompanyId);
+    }
+    const orgIds = Array.isArray(currentUser.organizationIds) ? currentUser.organizationIds : [];
+    if (orgIds.length) {
+      return organizations.filter((o) => orgIds.includes(o.id));
+    }
+    if (currentUser.organizationId) {
+      return organizations.filter((o) => o.id === currentUser.organizationId);
+    }
+    if (currentUser.companyId) {
+      return organizations.filter((o) => o.companyId === currentUser.companyId);
+    }
+    return organizations;
+  }, [organizations, currentUser.organizationIds, currentUser.organizationId, currentUser.companyId, isSuper, selectedCompanyId]);
+
+  useEffect(() => {
+    if (isSuper) return;
+    if (currentUser.organizationId) return;
+    const orgIds = Array.isArray(currentUser.organizationIds) ? currentUser.organizationIds : [];
+    const needsPick = !!currentUser.companyId || orgIds.length > 1;
+    if (!needsPick) return;
+    if (visibleOrgs.length === 0) {
+      setSelectedOrgId('');
+      return;
+    }
+    setSelectedOrgId((prev) => (prev && visibleOrgs.some((o) => o.id === prev) ? prev : visibleOrgs[0].id));
+  }, [visibleOrgs, currentUser.organizationId, currentUser.companyId, currentUser.organizationIds, isSuper]);
+
+  useEffect(() => {
+    if (!isSuper) return;
+    if (!companies.length) return;
+    setSelectedCompanyId((prev) => prev || companies[0].id);
+  }, [isSuper, companies]);
+
+  const userOrg = currentUser.organizationId
+    ? organizations.find((org) => org.id === currentUser.organizationId)
+    : selectedOrgId
+      ? organizations.find((org) => org.id === selectedOrgId)
+      : null;
+
+  const userCompany = userOrg?.companyId
+    ? companies.find((c) => c.id === userOrg.companyId)
+    : currentUser.companyId
+      ? companies.find((c) => c.id === currentUser.companyId)
+      : selectedCompanyId
+        ? companies.find((c) => c.id === selectedCompanyId)
+        : null;
 
   const availablePlatforms = userOrg 
     ? platformsData.filter(p => userOrg.platforms.includes(p.id))
@@ -82,13 +139,25 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !description.trim() || !platform || !category) return;
+    if (isSuper && (!selectedCompanyId || !selectedOrgId)) {
+      toast.error('Selecione Empresa e Organização para abrir o ticket.');
+      return;
+    }
+    if (!isSuper) {
+      const orgIds = Array.isArray(currentUser.organizationIds) ? currentUser.organizationIds : [];
+      if (!currentUser.organizationId && (currentUser.companyId || orgIds.length > 1) && !selectedOrgId) {
+        toast.error('Selecione a organização para abrir o ticket.');
+        return;
+      }
+    }
     onSubmit({ 
       subject, 
       description, 
       platform, 
       category, 
       urgency, 
-      attachment: selectedFile || undefined 
+      attachment: selectedFile || undefined,
+      organizationId: currentUser.organizationId || selectedOrgId || null,
     });
   };
 
@@ -120,23 +189,135 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
   };
 
   return (
-    <div className="flex-1 min-h-0 bg-discord-dark overflow-y-auto">
-      <div className="max-w-3xl mx-auto p-8 pb-32">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-black text-discord-text tracking-tight">Abrir Novo Ticket</h2>
-            <p className="text-discord-muted text-sm mt-1">Conte-nos o que está acontecendo e nossa equipe ajudará você.</p>
+    <div className="flex-1 min-h-0 bg-discord-dark overflow-y-auto overflow-x-hidden">
+      <div className="max-w-3xl mx-auto w-full min-w-0 px-4 py-6 sm:p-6 md:p-8 pb-28 md:pb-32">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-6 sm:mb-8 min-w-0">
+          <div className="min-w-0 pr-2">
+            <h2 className="text-xl sm:text-2xl font-black text-discord-text tracking-tight">Abrir Novo Ticket</h2>
+            <p className="text-discord-muted text-xs sm:text-sm mt-1">Conte-nos o que está acontecendo e nossa equipe ajudará você.</p>
           </div>
           <button 
             onClick={onCancel}
-            className="p-2 text-discord-muted hover:text-discord-text hover:bg-discord-hover rounded-full transition-all"
+            className="p-2 text-discord-muted hover:text-discord-text hover:bg-discord-hover rounded-full transition-all self-end sm:self-start shrink-0"
           >
             <X className="w-6 h-6" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          <div className="bg-discord-darker p-6 rounded-xl border border-discord-border space-y-6">
+          <div className="bg-discord-darker p-4 sm:p-6 rounded-xl border border-discord-border space-y-4 sm:space-y-6 min-w-0">
+            {/* Empresa/Organização */}
+            {isSuper ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Empresa *</label>
+                  <div className="relative">
+                    <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                    <select
+                      value={selectedCompanyId}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSelectedCompanyId(v);
+                        setSelectedOrgId('');
+                      }}
+                      required
+                      className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Organização *</label>
+                  <div className="relative">
+                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                    <select
+                      value={selectedOrgId}
+                      onChange={(e) => setSelectedOrgId(e.target.value)}
+                      required
+                      className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {visibleOrgs.map((o) => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Empresa</label>
+                  <div className="relative">
+                    <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                    <input
+                      value={userCompany?.name || '-'}
+                      disabled
+                      className="w-full bg-discord-darkest/50 border-none rounded-md p-3 pl-10 text-discord-muted outline-none cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Organização</label>
+                  {currentUser.organizationId ? (
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                      <input
+                        value={userOrg?.name || '-'}
+                        disabled
+                        className="w-full bg-discord-darkest/50 border-none rounded-md p-3 pl-10 text-discord-muted outline-none cursor-not-allowed"
+                      />
+                    </div>
+                  ) : (currentUser.companyId || (Array.isArray(currentUser.organizationIds) && currentUser.organizationIds.length > 1)) ? (
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                      <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        required
+                        className="w-full bg-discord-darkest border-none rounded-md p-3 pl-10 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none"
+                      >
+                        <option value="">Selecione...</option>
+                        {visibleOrgs.map((o) => (
+                          <option key={o.id} value={o.id}>{o.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-discord-muted" />
+                      <input
+                        value={userOrg?.name || '-'}
+                        disabled
+                        className="w-full bg-discord-darkest/50 border-none rounded-md p-3 pl-10 text-discord-muted outline-none cursor-not-allowed"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Legado: quando for cliente escopado por empresa sem org fixa, seleção acima já cobre */}
+            {!currentUser.organizationId && currentUser.companyId && false && (
+              <div>
+                <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Organização *</label>
+                <select
+                  value={selectedOrgId}
+                  onChange={(e) => setSelectedOrgId(e.target.value)}
+                  required
+                  className="w-full bg-discord-darkest border-none rounded-md p-3 text-discord-text focus:ring-2 focus:ring-discord-accent transition-all outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {visibleOrgs.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-black text-discord-muted uppercase tracking-widest mb-3">Assunto do Problema</label>
               <input
