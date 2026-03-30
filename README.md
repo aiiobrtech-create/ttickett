@@ -21,6 +21,7 @@ Este projeto foi ajustado para rodar **fora do Google AI Studio**, usando:
      - `SUPABASE_URL`
      - `SUPABASE_SERVICE_ROLE_KEY` (recomendado para rotas server-side como upload)
      - `PORT` (opcional, padrão 3000)
+   - **Deploy com front e API separados** (opcional): `VITE_API_BASE` no build do front; no servidor, `CORS_ORIGINS` (ver `.env.example`).
 
 ### Rodar localmente
 

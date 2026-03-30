@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Users, Monitor, Tag, Plus, X, Save, ArrowLeft, Info, Trash2, Edit3, Building2, Landmark, FileSpreadsheet, FileText, ShieldCheck, RefreshCcw } from 'lucide-react';
+import { Users, Monitor, Tag, Plus, X, Save, ArrowLeft, Info, Trash2, Edit3, Building2, Landmark, FileSpreadsheet, FileText, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,6 +15,7 @@ import {
   exportCategoriesToPDF
 } from '../lib/exportUtils';
 import { format } from 'date-fns';
+import { apiUrl } from '../lib/api';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../supabase';
 import { createClient } from '@supabase/supabase-js';
 
@@ -30,6 +31,15 @@ const authClient = createClient(supabaseUrl, supabaseAnonKey, {
 
 import { User } from '../types';
 import { isAnyAdministrator, isTtickettAdministrator } from '../lib/roles';
+
+function humanizeDeleteUserError(raw: string | undefined): string {
+  const m = String(raw || '').trim();
+  if (!m) return 'Falha ao excluir usuário.';
+  if (/database error deleting user/i.test(m)) {
+    return 'Falha ao remover a conta no Auth. Se o cadastro já saiu da lista, remova o usuário em Authentication no painel Supabase, se o e-mail ainda conseguir entrar.';
+  }
+  return m;
+}
 
 type RegistrationType = 'Empresas' | 'Organizações' | 'Usuários' | 'Plataformas' | 'Categorias';
 
@@ -54,7 +64,6 @@ export const Registrations: React.FC<RegistrationsProps> = ({
   const [activeType, setActiveType] = useState<RegistrationType | null>(initialActiveType as RegistrationType || null);
   const [isSaving, setIsSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: RegistrationType, id: string } | null>(null);
-  const [isReconcilingAuth, setIsReconcilingAuth] = useState(false);
   
   // Stateful data
   const [companies, setCompanies] = useState<any[]>([]);
@@ -102,6 +111,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
     if (!allowEditRow(type, item)) return false;
     if (type === 'Empresas' && !isSuper) return false;
     if ((type === 'Plataformas' || type === 'Categorias') && !isSuper) return false;
+    if (type === 'Usuários' && item?.id === currentUser?.id) return false;
     return true;
   };
 
@@ -541,7 +551,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         const token = sessionData?.session?.access_token;
         if (!token) throw new Error('Sessão inválida. Faça login novamente.');
 
-        const resp = await fetch('/api/admin/delete-user', {
+        const resp = await fetch(apiUrl('/api/admin/delete-user'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -552,7 +562,18 @@ export const Registrations: React.FC<RegistrationsProps> = ({
 
         const payload = (await resp.json().catch(() => ({}))) as any;
         if (!resp.ok) {
-          throw new Error(payload?.error || 'Falha ao excluir usuário no Supabase.');
+          const errRaw =
+            typeof payload?.error === 'string' && payload.error.trim()
+              ? payload.error
+              : 'Falha ao excluir usuário no servidor.';
+          throw new Error(humanizeDeleteUserError(errRaw));
+        }
+        if (payload?.warning) {
+          toast.success(getDeleteMessage(type), {
+            description: humanizeDeleteUserError(String(payload.warning)),
+          });
+          await refreshRegistrationLists();
+          return;
         }
       } else {
         const { error } = await supabase
@@ -574,32 +595,6 @@ export const Registrations: React.FC<RegistrationsProps> = ({
       toast.error(`Erro ao excluir: ${msg}`);
     } finally {
       setDeleteConfirm(null);
-    }
-  };
-
-  const reconcileAuthUsers = async () => {
-    try {
-      setIsReconcilingAuth(true);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      if (!token) throw new Error('Sessão inválida. Faça login novamente.');
-
-      const resp = await fetch('/api/admin/reconcile-auth-users', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const payload = (await resp.json().catch(() => ({}))) as any;
-      if (!resp.ok) throw new Error(payload?.error || 'Falha ao sincronizar usuários.');
-
-      toast.success(`Sincronização concluída. Removidos do Auth: ${payload?.deletedCount || 0}`);
-    } catch (e: any) {
-      toast.error(`Falha na sincronização: ${e?.message || 'Erro desconhecido'}`);
-    } finally {
-      setIsReconcilingAuth(false);
     }
   };
 
@@ -1089,17 +1084,6 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                     <p className="text-discord-muted text-[10px] md:text-xs line-clamp-2">Visualize e gerencie todos os registros de {activeType.toLowerCase()}.</p>
                   </div>
                 </div>
-                {activeType === 'Usuários' && currentUser?.role === 'ttickett_admin' && (
-                  <button
-                    onClick={reconcileAuthUsers}
-                    disabled={isReconcilingAuth}
-                    className="px-3 md:px-4 py-2 bg-discord-darkest hover:bg-discord-hover text-discord-text text-[10px] md:text-xs font-bold uppercase tracking-widest rounded border border-discord-border transition-colors flex items-center gap-2 disabled:opacity-50"
-                    title="Remove do Auth usuários que não existem mais na base"
-                  >
-                    <RefreshCcw className={cn('w-4 h-4', isReconcilingAuth ? 'animate-spin' : '')} />
-                    Sincronizar Auth
-                  </button>
-                )}
               </div>
 
               <div className="overflow-x-auto">

@@ -10,6 +10,7 @@ Na VPS, crie `/opt/ttickett/.env` (ou o caminho que usar) a partir de `.env.exam
 - **Produção na VPS:** `LISTEN_HOST=0.0.0.0` (o Node escuta em todas as interfaces; Nginx faz proxy na 443).
 - **Porta:** `PORT=3000` (ou outra; alinhe com o Nginx `upstream`).
 - **E-mail (se usar):** `EMAIL_WEBHOOK_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`.
+- **Front e API em hosts diferentes:** defina `VITE_API_BASE` na hora do `npm run build` (URL do Express) e no servidor `CORS_ORIGINS` com a origem do site (ex.: `https://app.seudominio.com`) ou `*` só para testes.
 
 O build do Vite embute `VITE_*` no front-end no momento do `npm run build`. Gere o build **com o `.env` de produção** já preenchido (ou exporte as variáveis antes do build no CI).
 

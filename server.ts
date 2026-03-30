@@ -53,6 +53,41 @@ const supabaseAnon = createClient(
   { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
 );
 
+/** Admin de empresa pode gerir usuário se companyId bater ou alguma org (legada ou user_organizations) for da empresa. */
+async function companyAdminCoversUser(
+  adminCompanyId: string,
+  targetUserId: string
+): Promise<boolean> {
+  const { data: target, error: tErr } = await supabase
+    .from("users")
+    .select('id,"companyId","organizationId"')
+    .eq("id", targetUserId)
+    .maybeSingle();
+  if (tErr || !target) return false;
+
+  const t = target as { companyId?: string | null; organizationId?: string | null };
+  if (t.companyId != null && t.companyId === adminCompanyId) return true;
+
+  const orgIds = new Set<string>();
+  if (t.organizationId) orgIds.add(t.organizationId);
+
+  const { data: mems } = await supabase
+    .from("user_organizations")
+    .select("organizationId")
+    .eq("userId", targetUserId);
+  for (const row of mems || []) {
+    const oid = (row as { organizationId?: string }).organizationId;
+    if (oid) orgIds.add(oid);
+  }
+
+  if (!orgIds.size) return false;
+  const { data: orgRows } = await supabase
+    .from("organizations")
+    .select('id,"companyId"')
+    .in("id", [...orgIds]);
+  return !!(orgRows || []).some((o: any) => o.companyId === adminCompanyId);
+}
+
 // Test Supabase connection on startup
 async function testSupabaseConnection() {
   try {
@@ -79,6 +114,30 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 app.use(cookieParser());
+
+/** Origens permitidas quando o front usa `VITE_API_BASE` (host diferente do Express). Lista separada por vírgulas ou `*`. */
+const corsOriginsEnv = process.env.CORS_ORIGINS?.trim();
+if (corsOriginsEnv) {
+  const allowed = corsOriginsEnv.split(",").map((s) => s.trim()).filter(Boolean);
+  app.use((req: Request, res: Response, next) => {
+    const origin = String(req.headers.origin || "");
+    const star = allowed.includes("*");
+    const ok = star || (!!origin && allowed.includes(origin));
+    if (ok && origin && !star) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    } else if (ok && star) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, x-ttickett-email-secret"
+    );
+    if (req.method === "OPTIONS") return res.status(204).end();
+    next();
+  });
+}
 
 registerEmailRoutes(app, { supabase, supabaseAnon });
 
@@ -184,6 +243,10 @@ app.post("/api/admin/delete-user", async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Sem permissão para excluir usuários." });
     }
 
+    if (targetUserId === requesterId) {
+      return res.status(400).json({ error: "Não é possível excluir a própria conta por esta ação." });
+    }
+
     if (isCompanyAdmin) {
       if (!requesterCompanyId) {
         return res.status(403).json({ error: "Administrador sem companyId configurado." });
@@ -204,35 +267,35 @@ app.post("/api/admin/delete-user", async (req: Request, res: Response) => {
         return res.status(403).json({ error: "Não é permitido excluir Administrador TTICKETT." });
       }
 
-      const targetCompanyId = (targetRow as any).companyId as string | null | undefined;
-      const targetOrgId = (targetRow as any).organizationId as string | null | undefined;
-
-      let sameCompany = targetCompanyId != null && targetCompanyId === requesterCompanyId;
-      if (!sameCompany && targetOrgId) {
-        const { data: orgRow } = await supabase
-          .from("organizations")
-          .select('id,"companyId"')
-          .eq("id", targetOrgId)
-          .maybeSingle();
-        sameCompany = !!orgRow?.companyId && orgRow.companyId === requesterCompanyId;
-      }
-
-      if (!sameCompany) {
-        return res.status(403).json({ error: "Você só pode excluir usuários da sua empresa." });
+      const covered = await companyAdminCoversUser(requesterCompanyId, targetUserId);
+      if (!covered) {
+        return res.status(403).json({
+          error:
+            "Você só pode excluir usuários vinculados à sua empresa (empresa ou organizações da empresa).",
+        });
       }
     }
 
-    // 1) Exclui do Auth
-    const { error: authDeleteErr } = await supabase.auth.admin.deleteUser(targetUserId);
-    if (authDeleteErr) {
-      return res.status(500).json({ error: authDeleteErr.message || "Falha ao excluir no Auth." });
-    }
-
-    // 2) Limpa a linha do app (caso não exista cascade)
+    // Remover public.users antes do Auth (FK public → auth impede delete no Auth com linha em public).
     const { error: dbDeleteErr } = await supabase.from("users").delete().eq("id", targetUserId);
     if (dbDeleteErr) {
-      // não falhar a requisição inteira: o Auth já foi excluído
-      return res.status(200).json({ ok: true, warning: dbDeleteErr.message });
+      console.error("[delete-user] DB:", dbDeleteErr.message);
+      return res.status(500).json({
+        error:
+          dbDeleteErr.message ||
+          "Falha ao excluir o cadastro. Verifique SUPABASE_SERVICE_ROLE_KEY no servidor.",
+      });
+    }
+
+    const { error: authDeleteErr } = await supabase.auth.admin.deleteUser(targetUserId);
+    if (authDeleteErr) {
+      console.error("[delete-user] Auth:", authDeleteErr.message);
+      return res.status(200).json({
+        ok: true,
+        warning:
+          authDeleteErr.message ||
+          "Cadastro removido; exclusão no Auth falhou. Remova o usuário em Authentication no Supabase ou tente de novo.",
+      });
     }
 
     return res.status(200).json({ ok: true });

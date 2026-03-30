@@ -9,6 +9,7 @@
   --color-discord-darkest: var(--bg-primary);
   --color-discord-sidebar: var(--bg-sidebar);
   --color-discord-accent: var(--accent-color, #5865f2);
+  --color-discord-accent-hover: var(--accent-hover, #4752c4);
   --color-discord-text: var(--text-primary);
   --color-discord-muted: var(--text-muted);
   --color-discord-hover: var(--bg-hover);
@@ -26,6 +27,7 @@
   --text-primary: #dbdee1;
   --text-muted: #949ba4;
   --accent-color: #5865f2;
+  --accent-hover: #4752c4;
   --border-color: rgba(255, 255, 255, 0.05);
 }
 
@@ -38,6 +40,7 @@
   --bg-active: #dbdee1;
   --text-primary: #060607;
   --text-muted: #4e5058;
+  --accent-hover: #4752c4;
   --border-color: rgba(0, 0, 0, 0.08);
 }
 

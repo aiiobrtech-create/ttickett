@@ -14,6 +14,7 @@ import { cn } from '../lib/utils';
 import { User } from '../types';
 import { isAnyAdministrator, isTtickettAdministrator } from '../lib/roles';
 import { AvatarDisplay } from './AvatarDisplay';
+import logoC from '@/scr_logo/logo-C.png';
 
 interface SidebarProps {
   user: User;
@@ -61,9 +62,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activeTab, setActiveTab,
         "fixed inset-y-0 left-0 z-50 w-[min(16rem,85vw)] md:w-64 shrink-0 bg-discord-sidebar flex flex-col h-full min-h-0 max-h-[100dvh] border-r border-discord-border transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="p-4 border-b border-discord-border flex items-center justify-between">
-          <h1 className="font-extrabold text-lg tracking-tight text-discord-text">TTICKETT</h1>
-          <button onClick={onClose} className="md:hidden text-discord-muted hover:text-discord-text">
+        <div className="p-4 border-b border-discord-border flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0 flex-1 flex items-center">
+            <img
+              src={logoC}
+              alt="TTICKETT"
+              className="h-6 w-auto max-h-6 max-w-[8.5rem] object-contain object-left"
+              decoding="async"
+            />
+          </div>
+          <button onClick={onClose} className="md:hidden text-discord-muted hover:text-discord-text shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>

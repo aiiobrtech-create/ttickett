@@ -19,6 +19,7 @@ import { Settings } from './screens/Settings';
 import { Registrations } from './screens/Registrations';
 import { Reports } from './screens/Reports';
 import { cn } from './lib/utils';
+import { apiUrl } from './lib/api';
 import { isAnyAdministrator, isTtickettAdministrator, isStaffRole } from './lib/roles';
 import { Toaster, toast } from 'sonner';
 
@@ -773,7 +774,7 @@ export default function App() {
           try {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session?.access_token) return;
-            const r = await fetch('/api/email/send-ticket-reply', {
+            const r = await fetch(apiUrl('/api/email/send-ticket-reply'), {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',

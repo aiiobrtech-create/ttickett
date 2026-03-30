@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { LogIn } from 'lucide-react';
 import { supabase, supabaseAnonKey, supabaseUrl } from '../supabase';
+import { apiUrl } from '../lib/api';
 import { User } from '../types';
+import logoW from '@/scr_logo/logo-W.png';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -32,6 +34,17 @@ const TOKEN_REQUEST_MS = 120_000;
 
 function isCredentialMessage(msg: string | undefined) {
   return !!msg && /invalid login credentials|invalid_grant|email not confirmed|email address not confirmed/i.test(msg);
+}
+
+/** Erros que não devem abrir o painel de debug (senha/e-mail ou confirmação de e-mail). */
+function isLoginCredentialUserFacingError(displayError: string): boolean {
+  const d = (displayError || '').toLowerCase();
+  return (
+    d.includes('email ou senha inválidos') ||
+    d.includes('invalid login credentials') ||
+    d.includes('invalid_grant') ||
+    /email not confirmed|email address not confirmed|e-mail não confirmado/i.test(displayError || '')
+  );
 }
 
 function isRetryableMessage(msg: string | undefined) {
@@ -127,7 +140,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [localServerUrls, setLocalServerUrls] = useState<string[] | null>(null);
 
   useEffect(() => {
-    fetch('/__meta')
+    fetch(apiUrl('/__meta'))
       .then((r) => (r.ok ? r.json() : null))
       .then((m: { urls?: string[] } | null) => {
         if (m?.urls?.length) setLocalServerUrls(m.urls);
@@ -166,7 +179,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         const timeoutId = setTimeout(() => controller.abort(), TOKEN_REQUEST_MS);
         let response: Response;
         try {
-          response = await fetch('/api/auth/login', {
+          response = await fetch(apiUrl('/api/auth/login'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: loginEmail, password: pwd }),
@@ -339,8 +352,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     <div className="min-h-screen bg-discord-darkest flex items-center justify-center p-4 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-discord-accent/10 via-transparent to-transparent">
       <div className="w-full max-w-[480px] bg-discord-dark p-8 rounded-lg shadow-2xl border border-discord-border">
         <div className="flex flex-col items-center mb-8">
-          <h1 className="text-2xl font-black text-discord-text tracking-tight">TTICKETT</h1>
-          <p className="text-discord-muted text-sm mt-2 font-medium">Bem-vindo de volta! Estamos prontos para ajudar.</p>
+          <img
+            src={logoW}
+            alt="TTICKETT"
+            className="h-12 sm:h-14 w-auto max-w-[min(100%,300px)] object-contain object-center select-none"
+            decoding="async"
+          />
+          <p className="text-discord-muted text-sm mt-4 font-medium text-center">Bem-vindo de volta! Estamos prontos para ajudar.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -384,7 +402,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           <p className="text-[10px] text-discord-muted font-bold uppercase tracking-widest opacity-50">
             Ambiente de Produção • v1.0.0
           </p>
-          {error && (
+          {error && !isLoginCredentialUserFacingError(error) && (
             <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-[10px] text-red-400 font-medium text-left">
               <p className="font-bold mb-1 uppercase tracking-tighter">Debug Info:</p>
               {localServerUrls?.[0] && (
