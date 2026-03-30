@@ -107,7 +107,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-red-500 text-white text-[9px] leading-4 text-center rounded-full border border-discord-dark">
+              <span className="absolute right-1 left-auto min-w-4 h-4 px-1 bg-red-500 text-white text-[9px] leading-4 text-center rounded-full border border-discord-dark">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}

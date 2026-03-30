@@ -11,16 +11,27 @@ export const bootstrapAdmin = async () => {
       await supabase.from('organizations').insert(MOCK_ORGANIZATIONS);
     }
 
+    const { data: scopeCompany } = await supabase
+      .from('companies')
+      .select('id')
+      .order('createdAt', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
     const { count: platformCount } = await supabase.from('platforms').select('*', { count: 'exact', head: true });
-    if (platformCount === 0) {
+    if (platformCount === 0 && scopeCompany?.id) {
       console.log('Seeding platforms...');
-      await supabase.from('platforms').insert(MOCK_PLATFORMS);
+      await supabase
+        .from('platforms')
+        .insert(MOCK_PLATFORMS.map((p) => ({ ...p, companyId: scopeCompany.id })));
     }
 
     const { count: categoryCount } = await supabase.from('categories').select('*', { count: 'exact', head: true });
-    if (categoryCount === 0) {
+    if (categoryCount === 0 && scopeCompany?.id) {
       console.log('Seeding categories...');
-      await supabase.from('categories').insert(MOCK_CATEGORIES);
+      await supabase
+        .from('categories')
+        .insert(MOCK_CATEGORIES.map((c) => ({ ...c, companyId: scopeCompany.id })));
     }
 
     // Seed a default admin user if not exists

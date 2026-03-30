@@ -106,13 +106,44 @@ export const NewTicket: React.FC<NewTicketProps> = ({ currentUser, onCancel, onS
         ? companies.find((c) => c.id === selectedCompanyId)
         : null;
 
-  const availablePlatforms = userOrg 
-    ? platformsData.filter(p => userOrg.platforms.includes(p.id))
-    : platformsData;
+  const ticketCatalogCompanyId = useMemo(() => {
+    if (isSuper) {
+      const fromOrg = selectedOrgId
+        ? organizations.find((o) => o.id === selectedOrgId)?.companyId
+        : undefined;
+      return fromOrg || selectedCompanyId || undefined;
+    }
+    return (
+      userOrg?.companyId ||
+      currentUser.companyId ||
+      undefined
+    );
+  }, [
+    isSuper,
+    selectedOrgId,
+    selectedCompanyId,
+    organizations,
+    userOrg?.companyId,
+    currentUser.companyId,
+  ]);
+
+  const platformsScoped = useMemo(() => {
+    if (!ticketCatalogCompanyId) return platformsData;
+    return platformsData.filter((p) => p.companyId === ticketCatalogCompanyId);
+  }, [platformsData, ticketCatalogCompanyId]);
+
+  const categoriesScoped = useMemo(() => {
+    if (!ticketCatalogCompanyId) return categoriesData;
+    return categoriesData.filter((c) => c.companyId === ticketCatalogCompanyId);
+  }, [categoriesData, ticketCatalogCompanyId]);
+
+  const availablePlatforms = userOrg
+    ? platformsScoped.filter((p) => userOrg.platforms.includes(p.id))
+    : platformsScoped;
 
   const availableCategories = userOrg
-    ? categoriesData.filter(c => userOrg.categories.includes(c.id))
-    : categoriesData;
+    ? categoriesScoped.filter((c) => userOrg.categories.includes(c.id))
+    : categoriesScoped;
 
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');

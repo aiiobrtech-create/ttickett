@@ -42,12 +42,14 @@ export interface PlatformType {
   name: string;
   url: string;
   env: string;
+  companyId?: string;
 }
 
 export interface CategoryType {
   id: string;
   name: string;
   desc: string;
+  companyId?: string;
 }
 
 export interface AccessLog {

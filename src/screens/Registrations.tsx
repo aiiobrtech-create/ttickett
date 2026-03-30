@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Monitor, Tag, Plus, X, Save, ArrowLeft, Info, Trash2, Edit3, Building2, Landmark, FileSpreadsheet, FileText, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -32,6 +32,23 @@ const authClient = createClient(supabaseUrl, supabaseAnonKey, {
 import { User } from '../types';
 import { isAnyAdministrator, isTtickettAdministrator } from '../lib/roles';
 
+/** Evita violar PK composta (companyId, id) em platforms/categories. */
+function nextUniqueCatalogId(
+  baseId: string,
+  companyId: string,
+  rows: { id: string; companyId?: string | null }[]
+): string {
+  const taken = new Set(
+    rows.filter((r) => r.companyId === companyId).map((r) => r.id)
+  );
+  let id = baseId || `item-${Date.now()}`;
+  let n = 2;
+  while (taken.has(id)) {
+    id = `${baseId}-${n++}`;
+  }
+  return id;
+}
+
 function humanizeDeleteUserError(raw: string | undefined): string {
   const m = String(raw || '').trim();
   if (!m) return 'Falha ao excluir usuário.';
@@ -63,7 +80,11 @@ export const Registrations: React.FC<RegistrationsProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode || 'grid');
   const [activeType, setActiveType] = useState<RegistrationType | null>(initialActiveType as RegistrationType || null);
   const [isSaving, setIsSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: RegistrationType, id: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    type: RegistrationType;
+    id: string;
+    companyId?: string | null;
+  } | null>(null);
   
   // Stateful data
   const [companies, setCompanies] = useState<any[]>([]);
@@ -89,7 +110,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
     }
     if (isSuper) return true;
     if (isCompanyAdminUser) {
-      return type === 'Organizações' || type === 'Usuários';
+      return (
+        type === 'Organizações' ||
+        type === 'Usuários' ||
+        type === 'Plataformas' ||
+        type === 'Categorias'
+      );
     }
     return isAnyAdministrator(currentUser?.role);
   };
@@ -101,7 +127,9 @@ export const Registrations: React.FC<RegistrationsProps> = ({
     }
     if (isCompanyAdminUser) {
       if (type === 'Empresas') return item?.id === currentUser?.companyId;
-      if (type === 'Plataformas' || type === 'Categorias') return false;
+      if (type === 'Plataformas' || type === 'Categorias') {
+        return item?.companyId != null && item?.companyId === currentUser?.companyId;
+      }
       return true;
     }
     return isAnyAdministrator(currentUser?.role);
@@ -110,7 +138,6 @@ export const Registrations: React.FC<RegistrationsProps> = ({
   const allowDeleteRow = (type: RegistrationType, item: any) => {
     if (!allowEditRow(type, item)) return false;
     if (type === 'Empresas' && !isSuper) return false;
-    if ((type === 'Plataformas' || type === 'Categorias') && !isSuper) return false;
     if (type === 'Usuários' && item?.id === currentUser?.id) return false;
     return true;
   };
@@ -188,6 +215,58 @@ export const Registrations: React.FC<RegistrationsProps> = ({
   const [editingItem, setEditingItem] = useState<any | null>(initialEditingItem || null);
   const [formData, setFormData] = useState<any>(initialEditingItem || {});
 
+  /**
+   * Só Administrador TTICKETT enxerga cadastros de todas as empresas.
+   * Administrador de empresa (`admin`) e demais perfis ficam no escopo de `companyId`.
+   */
+  const companiesForUi = useMemo(() => {
+    if (isSuper) return companies;
+    if (isCompanyAdminUser && !currentUser?.companyId) return [];
+    if (currentUser?.companyId) {
+      return companies.filter((c: any) => c.id === currentUser.companyId);
+    }
+    return companies;
+  }, [companies, isSuper, isCompanyAdminUser, currentUser?.companyId]);
+
+  const organizationsForUi = useMemo(() => {
+    if (isSuper) return organizations;
+    if (isCompanyAdminUser && !currentUser?.companyId) return [];
+    if (currentUser?.companyId) {
+      return organizations.filter((o: any) => o?.companyId === currentUser.companyId);
+    }
+    return organizations;
+  }, [organizations, isSuper, isCompanyAdminUser, currentUser?.companyId]);
+
+  const platformsForUi = useMemo(() => {
+    if (isSuper) return platforms;
+    if (isCompanyAdminUser && !currentUser?.companyId) return [];
+    if (currentUser?.companyId) {
+      return platforms.filter((p: any) => p.companyId === currentUser.companyId);
+    }
+    return platforms;
+  }, [platforms, isSuper, isCompanyAdminUser, currentUser?.companyId]);
+
+  const categoriesForUi = useMemo(() => {
+    if (isSuper) return categories;
+    if (isCompanyAdminUser && !currentUser?.companyId) return [];
+    if (currentUser?.companyId) {
+      return categories.filter((c: any) => c.companyId === currentUser.companyId);
+    }
+    return categories;
+  }, [categories, isSuper, isCompanyAdminUser, currentUser?.companyId]);
+
+  const platformsForOrgForm = useMemo(() => {
+    const cid = formData?.companyId;
+    if (!cid) return [] as any[];
+    return platformsForUi.filter((p: any) => p.companyId === cid);
+  }, [platformsForUi, formData?.companyId]);
+
+  const categoriesForOrgForm = useMemo(() => {
+    const cid = formData?.companyId;
+    if (!cid) return [] as any[];
+    return categoriesForUi.filter((c: any) => c.companyId === cid);
+  }, [categoriesForUi, formData?.companyId]);
+
   useEffect(() => {
     if (initialActiveType) setActiveType(initialActiveType as RegistrationType);
     if (initialEditingItem) {
@@ -212,25 +291,26 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         platforms: [],
         categories: [],
         env: 'Produção',
-        role: 'client'
+        role: 'client',
+        companyId: isCompanyAdminUser ? currentUser?.companyId ?? '' : '',
       });
     }
-  }, [editingItem]);
+  }, [editingItem, isCompanyAdminUser, currentUser?.companyId]);
 
   const registrationTypes = [
-    { id: 'Empresas' as const, icon: Landmark, label: 'Empresas', count: companies.length, desc: 'Detentoras do sistema; organizações ficam vinculadas à empresa.' },
-    { id: 'Organizações' as const, icon: Building2, label: 'Organizações', count: organizations.length, desc: 'Unidades de negócio vinculadas a uma empresa.' },
+    { id: 'Empresas' as const, icon: Landmark, label: 'Empresas', count: companiesForUi.length, desc: 'Detentoras do sistema; organizações ficam vinculadas à empresa.' },
+    { id: 'Organizações' as const, icon: Building2, label: 'Organizações', count: organizationsForUi.length, desc: 'Unidades de negócio vinculadas a uma empresa.' },
     { id: 'Usuários' as const, icon: Users, label: 'Usuários', count: users.length, desc: 'Gerencie clientes e atendentes.' },
-    { id: 'Plataformas' as const, icon: Monitor, label: 'Plataformas', count: platforms.length, desc: 'Cadastre novos sistemas e portais.' },
-    { id: 'Categorias' as const, icon: Tag, label: 'Categorias', count: categories.length, desc: 'Defina tipos de problemas e assuntos.' },
+    { id: 'Plataformas' as const, icon: Monitor, label: 'Plataformas', count: platformsForUi.length, desc: 'Cadastre novos sistemas e portais.' },
+    { id: 'Categorias' as const, icon: Tag, label: 'Categorias', count: categoriesForUi.length, desc: 'Defina tipos de problemas e assuntos.' },
   ];
 
   const dataMap: Record<RegistrationType, any[]> = {
-    'Empresas': companies,
-    'Organizações': organizations,
+    'Empresas': companiesForUi,
+    'Organizações': organizationsForUi,
     'Usuários': users,
-    'Plataformas': platforms,
-    'Categorias': categories
+    'Plataformas': platformsForUi,
+    'Categorias': categoriesForUi
   };
 
   const getSingularName = (type: RegistrationType) => {
@@ -322,7 +402,10 @@ export const Registrations: React.FC<RegistrationsProps> = ({
           };
         }
         if (tableName === 'platforms') {
-          const { id, name, url, env } = formData || {};
+          const { id, name, url, env, companyId: platCompany } = formData || {};
+          const rowCompanyId = (isSuper
+            ? String(platCompany || '').trim()
+            : String(currentUser?.companyId || '').trim()) || null;
           const normalizedId =
             (id && String(id).trim()) ||
             (name
@@ -334,10 +417,13 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                   .replace(/(^-|-$)/g, '')
               : '') ||
             `platform-${Date.now()}`;
-          return { id: normalizedId, name, url, env };
+          return { id: normalizedId, name, url, env, companyId: rowCompanyId };
         }
         if (tableName === 'categories') {
-          const { id, name, desc } = formData || {};
+          const { id, name, desc, companyId: catCompany } = formData || {};
+          const rowCompanyId = (isSuper
+            ? String(catCompany || '').trim()
+            : String(currentUser?.companyId || '').trim()) || null;
           const normalizedId =
             (id && String(id).trim()) ||
             (name
@@ -349,7 +435,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                   .replace(/(^-|-$)/g, '')
               : '') ||
             `category-${Date.now()}`;
-          return { id: normalizedId, name, desc };
+          return { id: normalizedId, name, desc, companyId: rowCompanyId };
         }
         return formData;
       };
@@ -358,6 +444,17 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         toast.error('Selecione a empresa à qual esta organização pertence.');
         setIsSaving(false);
         return;
+      }
+
+      if (activeType === 'Plataformas' || activeType === 'Categorias') {
+        const cid = isSuper
+          ? String((formData || {}).companyId || '').trim()
+          : String(currentUser?.companyId || '').trim();
+        if (!cid) {
+          toast.error('Selecione a empresa para vincular plataforma ou categoria.');
+          setIsSaving(false);
+          return;
+        }
       }
 
       const payload = buildPayload();
@@ -371,7 +468,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
           setIsSaving(false);
           return;
         }
-        const org = organizations.find((o) => o.id === (payload as any).defaultOrganizationId);
+        const org = organizationsForUi.find((o) => o.id === (payload as any).defaultOrganizationId);
         if (!org?.companyId || org.companyId !== cid) {
           toast.error('A organização padrão deve pertencer a esta empresa.');
           setIsSaving(false);
@@ -392,7 +489,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         const orgIds = Array.isArray(formData.organizationIds) ? formData.organizationIds : [];
         // validação: organizações precisam existir e bater com empresa, se escolhida
         for (const oid of orgIds) {
-          const org = organizations.find((o) => o.id === oid);
+          const org = organizationsForUi.find((o) => o.id === oid);
           if (!org?.companyId) {
             toast.error('Há organizações sem empresa vinculada. Edite a organização e associe uma empresa.');
             setIsSaving(false);
@@ -406,7 +503,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
         }
         // Se escolheu pelo menos 1 organização e não escolheu empresa, derivar da primeira org
         if (!compId && orgIds.length > 0) {
-          const first = organizations.find((o) => o.id === orgIds[0]);
+          const first = organizationsForUi.find((o) => o.id === orgIds[0]);
           if (first?.companyId) compId = first.companyId;
         }
         (payload as any).companyId = compId;
@@ -415,10 +512,20 @@ export const Registrations: React.FC<RegistrationsProps> = ({
       console.log(`[Registrations] Saving to ${tableName}...`, payload);
 
       if (editingItem) {
-        const { error } = await supabase
-          .from(tableName)
-          .update(payload)
-          .eq('id', editingItem.id);
+        let payloadToSend: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
+        if (activeType === 'Plataformas' || activeType === 'Categorias') {
+          delete payloadToSend.id;
+          delete payloadToSend.companyId;
+        }
+        let upd = supabase.from(tableName).update(payloadToSend).eq('id', editingItem.id);
+        if (activeType === 'Plataformas' || activeType === 'Categorias') {
+          const scopeCid =
+            editingItem.companyId ||
+            String((formData || {}).companyId || '').trim() ||
+            String(currentUser?.companyId || '').trim();
+          if (scopeCid) upd = upd.eq('companyId', scopeCid);
+        }
+        const { error } = await upd;
         if (error) throw error;
         if (activeType === 'Usuários') {
           const nextOrgIds = Array.isArray(formData.organizationIds) ? formData.organizationIds : [];
@@ -479,12 +586,25 @@ export const Registrations: React.FC<RegistrationsProps> = ({
             if (insErr) throw insErr;
           }
         } else {
-          const { error } = await supabase
-            .from(tableName)
-            .insert({
-              ...(payload || {}),
-              createdAt: new Date().toISOString()
-            });
+          let insertBody: Record<string, unknown> = {
+            ...(payload as Record<string, unknown>),
+            createdAt: new Date().toISOString(),
+          };
+          if (activeType === 'Plataformas') {
+            const cid = String((insertBody.companyId as string) || '').trim();
+            const baseId = String(insertBody.id || '').trim();
+            if (cid && baseId) {
+              insertBody.id = nextUniqueCatalogId(baseId, cid, platforms);
+            }
+          }
+          if (activeType === 'Categorias') {
+            const cid = String((insertBody.companyId as string) || '').trim();
+            const baseId = String(insertBody.id || '').trim();
+            if (cid && baseId) {
+              insertBody.id = nextUniqueCatalogId(baseId, cid, categories);
+            }
+          }
+          const { error } = await supabase.from(tableName).insert(insertBody);
           if (error) throw error;
         }
         toast.success(getSuccessMessage(activeType, false));
@@ -512,8 +632,8 @@ export const Registrations: React.FC<RegistrationsProps> = ({
     }
   };
 
-  const handleDelete = (type: RegistrationType, id: string) => {
-    setDeleteConfirm({ type, id });
+  const handleDelete = (type: RegistrationType, item: { id: string; companyId?: string | null }) => {
+    setDeleteConfirm({ type, id: item.id, companyId: item.companyId });
   };
 
   const confirmDelete = async () => {
@@ -576,10 +696,14 @@ export const Registrations: React.FC<RegistrationsProps> = ({
           return;
         }
       } else {
-        const { error } = await supabase
-          .from(tableName)
-          .delete()
-          .eq('id', id);
+        let del = supabase.from(tableName).delete().eq('id', id);
+        if (
+          (type === 'Plataformas' || type === 'Categorias') &&
+          deleteConfirm.companyId
+        ) {
+          del = del.eq('companyId', deleteConfirm.companyId);
+        }
+        const { error } = await del;
         if (error) throw error;
       }
 
@@ -710,7 +834,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                             className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
                           >
                             <option value="">— Primeira organização da empresa (automático) —</option>
-                            {organizations
+                            {organizationsForUi
                               .filter((o) => o.companyId === editingItem.id)
                               .map((o) => (
                                 <option key={o.id} value={o.id}>
@@ -740,11 +864,25 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                         <select
                           required
                           value={formData.companyId || ''}
-                          onChange={(e) => handleInputChange('companyId', e.target.value || null)}
+                          onChange={(e) => {
+                            const v = e.target.value || null;
+                            const platIds = new Set(
+                              platformsForUi.filter((p: any) => p.companyId === v).map((p: any) => p.id)
+                            );
+                            const catIds = new Set(
+                              categoriesForUi.filter((c: any) => c.companyId === v).map((c: any) => c.id)
+                            );
+                            setFormData((prev: any) => ({
+                              ...prev,
+                              companyId: v,
+                              platforms: (prev.platforms || []).filter((pid: string) => platIds.has(pid)),
+                              categories: (prev.categories || []).filter((cid2: string) => catIds.has(cid2)),
+                            }));
+                          }}
                           className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
                         >
                           <option value="">Selecione a empresa detentora</option>
-                          {companies.map((c) => (
+                          {companiesForUi.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
                             </option>
@@ -754,19 +892,27 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                       <div className="space-y-2">
                         <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Plataformas Permitidas</label>
                         <MultiSelect
-                          options={platforms.map(p => ({ id: p.id, name: p.name }))}
+                          options={platformsForOrgForm.map((p) => ({ id: p.id, name: p.name }))}
                           selectedIds={formData.platforms || []}
                           onChange={(selectedIds) => handleInputChange('platforms', selectedIds)}
-                          placeholder="Selecione as plataformas..."
+                          placeholder={
+                            formData.companyId
+                              ? 'Selecione as plataformas...'
+                              : 'Escolha a empresa primeiro'
+                          }
                         />
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Categorias Permitidas</label>
                         <MultiSelect
-                          options={categories.map(c => ({ id: c.id, name: c.name }))}
+                          options={categoriesForOrgForm.map((c) => ({ id: c.id, name: c.name }))}
                           selectedIds={formData.categories || []}
                           onChange={(selectedIds) => handleInputChange('categories', selectedIds)}
-                          placeholder="Selecione as categorias..."
+                          placeholder={
+                            formData.companyId
+                              ? 'Selecione as categorias...'
+                              : 'Escolha a empresa primeiro'
+                          }
                         />
                       </div>
                       <div className="space-y-2">
@@ -860,7 +1006,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                           onChange={(e) => {
                             const v = e.target.value;
                             setFormData((prev) => {
-                              const nextOrgs = organizations.filter((o) => !v || o.companyId === v);
+                              const nextOrgs = organizationsForUi.filter((o) => !v || o.companyId === v);
                               const prevIds = Array.isArray(prev.organizationIds) ? prev.organizationIds : [];
                               const keptIds = prevIds.filter((oid: string) => nextOrgs.some((o) => o.id === oid));
                               return { ...prev, companyId: v || null, organizationIds: keptIds };
@@ -869,7 +1015,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                           className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
                         >
                           <option value="">Nenhuma (acesso global conforme perfil)</option>
-                          {companies.map((c) => (
+                          {companiesForUi.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
                             </option>
@@ -882,12 +1028,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                           Você pode selecionar várias. Se não selecionar nenhuma, o usuário fica com acesso global (limitado apenas por cargo/empresa quando aplicável).
                         </p>
                         <MultiSelect
-                          options={organizations
+                          options={organizationsForUi
                             .filter((org) => !formData.companyId || org.companyId === formData.companyId)
                             .map((org) => ({ id: org.id, name: org.name }))}
                           selectedIds={formData.organizationIds || []}
                           onChange={(selectedIds) => {
-                            const orgs = organizations.filter((o) => selectedIds.includes(o.id));
+                            const orgs = organizationsForUi.filter((o) => selectedIds.includes(o.id));
                             const inferredCompanyId =
                               formData.companyId ||
                               (orgs.length > 0 ? orgs[0].companyId : null) ||
@@ -935,6 +1081,33 @@ export const Registrations: React.FC<RegistrationsProps> = ({
 
                   {activeType === 'Plataformas' && (
                     <>
+                      {isSuper && (
+                        <div className="space-y-2">
+                          <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">
+                            Empresa *
+                          </label>
+                          <select
+                            required
+                            value={formData.companyId || ''}
+                            onChange={(e) => handleInputChange('companyId', e.target.value || null)}
+                            className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
+                          >
+                            <option value="">Selecione a empresa</option>
+                            {companiesForUi.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {isCompanyAdminUser && (
+                        <p className="text-[10px] text-discord-muted leading-relaxed">
+                          Plataforma vinculada à sua empresa (
+                          {companiesForUi.find((c) => c.id === currentUser?.companyId)?.name || '—'}
+                          ).
+                        </p>
+                      )}
                       <div className="space-y-2">
                         <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">URL de Acesso</label>
                         <input 
@@ -969,6 +1142,33 @@ export const Registrations: React.FC<RegistrationsProps> = ({
 
                   {activeType === 'Categorias' && (
                     <div className="space-y-2">
+                      {isSuper && (
+                        <div className="space-y-2 pb-2">
+                          <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">
+                            Empresa *
+                          </label>
+                          <select
+                            required
+                            value={formData.companyId || ''}
+                            onChange={(e) => handleInputChange('companyId', e.target.value || null)}
+                            className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
+                          >
+                            <option value="">Selecione a empresa</option>
+                            {companiesForUi.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {isCompanyAdminUser && (
+                        <p className="text-[10px] text-discord-muted leading-relaxed pb-2">
+                          Categoria vinculada à sua empresa (
+                          {companiesForUi.find((c) => c.id === currentUser?.companyId)?.name || '—'}
+                          ).
+                        </p>
+                      )}
                       <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Descrição Detalhada</label>
                       <textarea 
                         rows={4}
@@ -1067,7 +1267,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                         const data = dataMap[activeType];
                         if (activeType === 'Empresas') exportCompaniesToPDF(data, 'Relatório de Empresas');
                         else if (activeType === 'Usuários') exportUsersToPDF(data, 'Relatório de Usuários');
-                        else if (activeType === 'Organizações') exportOrganizationsToPDF(data, 'Relatório de Organizações', companies);
+                        else if (activeType === 'Organizações') exportOrganizationsToPDF(data, 'Relatório de Organizações', companiesForUi);
                         else if (activeType === 'Plataformas') exportPlatformsToPDF(data, 'Relatório de Plataformas');
                         else if (activeType === 'Categorias') exportCategoriesToPDF(data, 'Relatório de Categorias');
                         toast.success(`PDF de ${activeType} gerado!`);
@@ -1091,6 +1291,11 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                   <thead>
                     <tr className="bg-discord-darkest/50">
                       <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">Nome</th>
+                      {(activeType === 'Plataformas' || activeType === 'Categorias') && (
+                        <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">
+                          Empresa
+                        </th>
+                      )}
                       {activeType === 'Empresas' && (
                         <>
                           <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">
@@ -1128,8 +1333,20 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                   </thead>
                   <tbody className="divide-y divide-discord-border">
                     {data.map((item: any) => (
-                      <tr key={item.id} className="hover:bg-discord-hover transition-colors group">
+                      <tr
+                        key={
+                          activeType === 'Plataformas' || activeType === 'Categorias'
+                            ? `${item.companyId}-${item.id}`
+                            : item.id
+                        }
+                        className="hover:bg-discord-hover transition-colors group"
+                      >
                         <td className="p-4 text-sm text-discord-text font-medium">{item.name}</td>
+                        {(activeType === 'Plataformas' || activeType === 'Categorias') && (
+                          <td className="p-4 text-sm text-discord-muted">
+                              {companiesForUi.find((c) => c.id === item.companyId)?.name || '—'}
+                          </td>
+                        )}
                         {activeType === 'Empresas' && (
                           <>
                             <td className="p-4 text-sm text-discord-muted truncate max-w-[200px]">
@@ -1141,7 +1358,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                         {activeType === 'Organizações' && (
                           <>
                             <td className="p-4 text-sm text-discord-muted">
-                              {companies.find((c) => c.id === item.companyId)?.name || '—'}
+                              {companiesForUi.find((c) => c.id === item.companyId)?.name || '—'}
                             </td>
                             <td className="p-4 text-sm text-discord-muted">{(item.platforms || []).length} permitidas</td>
                             <td className="p-4 text-sm text-discord-muted">{(item.categories || []).length} permitidas</td>
@@ -1165,12 +1382,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                               </span>
                             </td>
                             <td className="p-4 text-sm text-discord-muted">
-                              {companies.find((c) => c.id === item.companyId)?.name || '—'}
+                              {companiesForUi.find((c) => c.id === item.companyId)?.name || '—'}
                             </td>
                             <td className="p-4 text-sm text-discord-muted">
                               {(item.organizationIds || []).length
                                 ? (item.organizationIds as string[])
-                                    .map((oid) => organizations.find((o) => o.id === oid)?.name)
+                                    .map((oid) => organizationsForUi.find((o) => o.id === oid)?.name)
                                     .filter(Boolean)
                                     .join(', ')
                                 : '-'}
@@ -1204,7 +1421,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                           )}
                           {allowDeleteRow(activeType, item) && (
                           <button 
-                            onClick={() => handleDelete(activeType, item.id)}
+                            onClick={() => handleDelete(activeType, item)}
                             className="text-red-600/50 dark:text-red-400/50 hover:text-red-600 dark:hover:text-red-400 text-xs font-bold uppercase tracking-widest"
                           >
                             Excluir
@@ -1277,13 +1494,13 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                 <button 
                   onClick={() => {
                     const allData = [
-                      ...companies.map((co) => ({
+                      ...companiesForUi.map((co) => ({
                         Tipo: 'Empresa',
                         Nome: co.name,
                         Contato: '-',
                         Email: co.supportEmail || '-',
                       })),
-                      ...organizations.map(o => ({ Tipo: 'Organização', Nome: o.name, Contato: o.contactPerson || '-', Email: o.email || '-' })),
+                      ...organizationsForUi.map(o => ({ Tipo: 'Organização', Nome: o.name, Contato: o.contactPerson || '-', Email: o.email || '-' })),
                       ...users.map(u => ({ Tipo: 'Usuário', Nome: u.name, Email: u.email, Cargo: u.role })),
                       ...platforms.map(p => ({ Tipo: 'Plataforma', Nome: p.name, URL: p.url, Ambiente: p.env })),
                       ...categories.map(c => ({ Tipo: 'Categoria', Nome: c.name, Descrição: c.desc }))
@@ -1308,7 +1525,7 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                 <span className="text-[10px] font-bold uppercase tracking-widest text-discord-text">PDF Empresas</span>
               </button>
               <button 
-                onClick={() => exportOrganizationsToPDF(organizations, 'Relatório de Organizações', companies)}
+                onClick={() => exportOrganizationsToPDF(organizationsForUi, 'Relatório de Organizações', companiesForUi)}
                 className="p-3 bg-discord-dark rounded-lg border border-discord-border hover:border-discord-accent/50 transition-all text-left flex items-center gap-3"
               >
                 <Building2 className="w-4 h-4 text-discord-muted" />
