@@ -1,0 +1,21 @@
+# Uso: copie .env para a mesma pasta e ajuste variáveis.
+# docker compose up -d --build
+
+services:
+  ttickett:
+    build: .
+    container_name: ttickett
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LISTEN_HOST: 0.0.0.0
+    restart: unless-stopped
+    volumes:
+      - ttickett-uploads:/app/uploads
+
+volumes:
+  ttickett-uploads:

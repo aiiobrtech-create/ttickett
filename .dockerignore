@@ -1,0 +1,14 @@
+node_modules
+dist
+uploads
+.git
+.github
+*.log
+.env
+.env.*
+!.env.example
+deploy
+.cursor
+mcps
+coverage
+.DS_Store

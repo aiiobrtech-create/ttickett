@@ -1,0 +1,36 @@
+# Instalação (Linux):
+# 1. sudo mkdir -p /opt/ttickett && sudo chown $USER:$USER /opt/ttickett
+# 2. Faça clone ou rsync do projeto em /opt/ttickett
+# 3. cd /opt/ttickett && npm ci && npm run build
+# 4. sudo cp deploy/systemd/ttickett.service /etc/systemd/system/
+# 5. Edite User/Group e WorkingDirectory se necessário
+# 6. Crie /opt/ttickett/.env (veja deploy/VPS.md)
+# 7. sudo systemctl daemon-reload && sudo systemctl enable --now ttickett
+
+[Unit]
+Description=TTICKETT (Express + Vite build)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/ttickett
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=LISTEN_HOST=0.0.0.0
+
+# Carrega variáveis do arquivo (crie /opt/ttickett/.env na VPS)
+EnvironmentFile=-/opt/ttickett/.env
+
+ExecStart=/usr/bin/npm run start:prod
+Restart=on-failure
+RestartSec=5
+
+# Segurança básica
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

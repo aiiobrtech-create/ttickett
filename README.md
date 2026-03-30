@@ -36,7 +36,8 @@ Este projeto foi ajustado para rodar **fora do Google AI Studio**, usando:
 - Gerar build do frontend:
   - `npm run build`
 - Rodar em modo produção (servindo `dist/`):
-  - `NODE_ENV=production npm run start`
+  - `npm run start:prod` (define `NODE_ENV=production` via `cross-env`)
+- **Deploy em VPS / Docker / systemd / Nginx / PM2:** veja o guia em [`deploy/VPS.md`](deploy/VPS.md).
 
 ### Ajustes necessários no Supabase (cloud)
 
