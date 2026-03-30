@@ -9,6 +9,7 @@ import fs from "fs";
 import { exec } from "child_process";
 
 import { createClient } from "@supabase/supabase-js";
+import { registerEmailRoutes } from "./server/emailIntegration";
 
 interface MulterRequest extends Request {
   file?: Express.Multer.File;
@@ -75,8 +76,11 @@ const PORT = Number(process.env.PORT || 3000);
 const upload = multer({ dest: "uploads/" });
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 app.use(cookieParser());
+
+registerEmailRoutes(app, { supabase, supabaseAnon });
 
 app.get("/__health", (_req: Request, res: Response) => {
   res.status(200).json({

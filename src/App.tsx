@@ -19,7 +19,7 @@ import { Settings } from './screens/Settings';
 import { Registrations } from './screens/Registrations';
 import { Reports } from './screens/Reports';
 import { cn } from './lib/utils';
-import { isAnyAdministrator, isTtickettAdministrator } from './lib/roles';
+import { isAnyAdministrator, isTtickettAdministrator, isStaffRole } from './lib/roles';
 import { Toaster, toast } from 'sonner';
 
 export default function App() {
@@ -767,6 +767,32 @@ export default function App() {
       setTickets(prev =>
         prev.map(t => (t.id === ticketId ? { ...t, messages: nextMessages as any, updatedAt } : t))
       );
+
+      if (!isInternal && isStaffRole(user.role) && ticket.requesterEmail?.trim()) {
+        void (async () => {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.access_token) return;
+            const r = await fetch('/api/email/send-ticket-reply', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ ticketId, content }),
+            });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              toast.warning('Mensagem salva, mas o e-mail ao solicitante falhou.', {
+                description: typeof (j as any)?.error === 'string' ? (j as any).error : `HTTP ${r.status}`,
+              });
+            }
+          } catch (e) {
+            console.warn('[email] send-ticket-reply', e);
+            toast.warning('Mensagem salva; não foi possível enviar e-mail ao solicitante.');
+          }
+        })();
+      }
     } catch (error) {
       console.error("Error adding message:", error);
       const msg = (error as any)?.message || (error as any)?.details || 'Falha desconhecida';

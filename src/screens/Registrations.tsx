@@ -271,8 +271,14 @@ export const Registrations: React.FC<RegistrationsProps> = ({
 
       const buildPayload = () => {
         if (tableName === 'companies') {
-          const { name, observations } = formData || {};
-          return { name, observations: observations ?? null };
+          const { name, observations, supportEmail, emailFromName, defaultOrganizationId } = formData || {};
+          return {
+            name,
+            observations: observations ?? null,
+            supportEmail: (supportEmail && String(supportEmail).trim()) || null,
+            emailFromName: (emailFromName && String(emailFromName).trim()) || null,
+            defaultOrganizationId: defaultOrganizationId || null,
+          };
         }
         if (tableName === 'organizations') {
           const {
@@ -345,6 +351,23 @@ export const Registrations: React.FC<RegistrationsProps> = ({
       }
 
       const payload = buildPayload();
+
+      if (activeType === 'Empresas' && (payload as any).defaultOrganizationId) {
+        const cid = editingItem?.id;
+        if (!cid) {
+          toast.error(
+            'Salve a empresa primeiro. Depois edite o cadastro para definir a organização padrão de tickets por e-mail.'
+          );
+          setIsSaving(false);
+          return;
+        }
+        const org = organizations.find((o) => o.id === (payload as any).defaultOrganizationId);
+        if (!org?.companyId || org.companyId !== cid) {
+          toast.error('A organização padrão deve pertencer a esta empresa.');
+          setIsSaving(false);
+          return;
+        }
+      }
 
       if (activeType === 'Usuários') {
         if (
@@ -650,16 +673,69 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                   </div>
 
                   {activeType === 'Empresas' && (
-                    <div className="space-y-2">
-                      <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Observações</label>
-                      <textarea
-                        rows={4}
-                        value={formData.observations || ''}
-                        onChange={(e) => handleInputChange('observations', e.target.value)}
-                        placeholder="Notas sobre a empresa detentora do sistema..."
-                        className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all resize-none"
-                      />
-                    </div>
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">
+                          E-mail de suporte (recebe tickets)
+                        </label>
+                        <input
+                          type="email"
+                          value={formData.supportEmail || ''}
+                          onChange={(e) => handleInputChange('supportEmail', e.target.value.trim() || null)}
+                          placeholder="ex.: suporte@minhaempresa.com"
+                          className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
+                        />
+                        <p className="text-[10px] text-discord-muted leading-relaxed">
+                          Configure o provedor (ex.: Mailgun, SendGrid) para encaminhar mensagens recebidas neste endereço
+                          para o webhook do servidor TTICKETT. Um endereço por empresa.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">
+                          Nome no remetente (respostas)
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.emailFromName || ''}
+                          onChange={(e) => handleInputChange('emailFromName', e.target.value)}
+                          placeholder="Ex.: Suporte Minha Empresa"
+                          className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
+                        />
+                      </div>
+                      {editingItem?.id && (
+                        <div className="space-y-2">
+                          <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">
+                            Organização padrão (ticket por e-mail)
+                          </label>
+                          <select
+                            value={formData.defaultOrganizationId || ''}
+                            onChange={(e) =>
+                              handleInputChange('defaultOrganizationId', e.target.value || null)
+                            }
+                            className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all"
+                          >
+                            <option value="">— Primeira organização da empresa (automático) —</option>
+                            {organizations
+                              .filter((o) => o.companyId === editingItem.id)
+                              .map((o) => (
+                                <option key={o.id} value={o.id}>
+                                  {o.name}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-discord-muted font-black uppercase tracking-widest">Observações</label>
+                        <textarea
+                          rows={4}
+                          value={formData.observations || ''}
+                          onChange={(e) => handleInputChange('observations', e.target.value)}
+                          placeholder="Notas sobre a empresa detentora do sistema..."
+                          className="w-full bg-discord-darkest border border-discord-border rounded-md p-3 text-sm text-discord-text outline-none focus:ring-1 focus:ring-discord-accent transition-all resize-none"
+                        />
+                      </div>
+                    </>
                   )}
 
                   {activeType === 'Organizações' && (
@@ -1032,7 +1108,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                     <tr className="bg-discord-darkest/50">
                       <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">Nome</th>
                       {activeType === 'Empresas' && (
-                        <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">Observações</th>
+                        <>
+                          <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">
+                            E-mail suporte
+                          </th>
+                          <th className="p-4 text-[10px] text-discord-muted font-black uppercase tracking-widest border-b border-discord-border">Observações</th>
+                        </>
                       )}
                       {activeType === 'Organizações' && (
                         <>
@@ -1066,7 +1147,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                       <tr key={item.id} className="hover:bg-discord-hover transition-colors group">
                         <td className="p-4 text-sm text-discord-text font-medium">{item.name}</td>
                         {activeType === 'Empresas' && (
-                          <td className="p-4 text-sm text-discord-muted italic truncate max-w-[280px]">{item.observations || '—'}</td>
+                          <>
+                            <td className="p-4 text-sm text-discord-muted truncate max-w-[200px]">
+                              {item.supportEmail || '—'}
+                            </td>
+                            <td className="p-4 text-sm text-discord-muted italic truncate max-w-[280px]">{item.observations || '—'}</td>
+                          </>
                         )}
                         {activeType === 'Organizações' && (
                           <>
@@ -1207,7 +1293,12 @@ export const Registrations: React.FC<RegistrationsProps> = ({
                 <button 
                   onClick={() => {
                     const allData = [
-                      ...companies.map((co) => ({ Tipo: 'Empresa', Nome: co.name, Contato: '-', Email: '-' })),
+                      ...companies.map((co) => ({
+                        Tipo: 'Empresa',
+                        Nome: co.name,
+                        Contato: '-',
+                        Email: co.supportEmail || '-',
+                      })),
                       ...organizations.map(o => ({ Tipo: 'Organização', Nome: o.name, Contato: o.contactPerson || '-', Email: o.email || '-' })),
                       ...users.map(u => ({ Tipo: 'Usuário', Nome: u.name, Email: u.email, Cargo: u.role })),
                       ...platforms.map(p => ({ Tipo: 'Plataforma', Nome: p.name, URL: p.url, Ambiente: p.env })),

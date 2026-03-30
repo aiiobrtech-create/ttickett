@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, User as UserIcon, ShieldCheck, Clock, Monitor, ChevronLeft, X, FileText, Image as ImageIcon, Tag, Building2, Landmark, Printer, Trash2 } from 'lucide-react';
+import { Send, Paperclip, User as UserIcon, ShieldCheck, Clock, Monitor, ChevronLeft, X, FileText, Image as ImageIcon, Tag, Building2, Landmark, Printer, Trash2, Mail } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -134,6 +134,15 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
               <span className="text-[10px] font-black text-discord-muted bg-discord-darkest px-1.5 py-0.5 rounded border border-discord-border tracking-tighter shrink-0">
                 {ticket.number}
               </span>
+              {ticket.source === 'email' && (
+                <span
+                  className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-tighter text-sky-400 bg-sky-500/10 border border-sky-500/30 px-1.5 py-0.5 rounded shrink-0"
+                  title="Aberto ou atualizado por e-mail (caixa da empresa)"
+                >
+                  <Mail className="w-3 h-3" />
+                  E-mail
+                </span>
+              )}
               <h2 className="text-discord-text font-bold text-sm sm:text-base line-clamp-1 sm:line-clamp-none">{ticket.subject}</h2>
             </div>
           </div>
@@ -281,6 +290,11 @@ export const TicketDetails: React.FC<TicketDetailsProps> = ({
                     {msg.isInternal && (
                       <span className="bg-amber-500/20 text-amber-500 text-[8px] sm:text-[9px] font-black px-1 rounded uppercase tracking-tighter border border-amber-500/30">
                         Observação Interna
+                      </span>
+                    )}
+                    {msg.source === 'email' && !msg.isInternal && (
+                      <span className="bg-sky-500/10 text-sky-400 text-[8px] sm:text-[9px] font-black px-1 rounded uppercase tracking-tighter border border-sky-500/25">
+                        E-mail
                       </span>
                     )}
                     <span className="text-[9px] sm:text-[10px] text-discord-muted font-medium ml-auto sm:ml-0">

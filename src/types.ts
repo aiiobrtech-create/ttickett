@@ -15,6 +15,12 @@ export interface Company {
   id: string;
   name: string;
   observations?: string;
+  /** Endereço que recebe e-mails para tickets (escopo empresa). */
+  supportEmail?: string;
+  /** Organização padrão para tickets abertos por e-mail. */
+  defaultOrganizationId?: string;
+  /** Nome exibido no remetente das respostas (ex.: "Suporte ACME"). */
+  emailFromName?: string;
   createdAt?: Date;
 }
 
@@ -61,6 +67,9 @@ export interface Message {
   content: string;
   timestamp: Date;
   isInternal?: boolean;
+  /** Origem da mensagem quando integração e-mail. */
+  source?: 'app' | 'email';
+  emailMessageId?: string;
   attachment?: {
     name: string;
     url: string;
@@ -76,6 +85,10 @@ export interface Ticket {
   requesterUid?: string;
   organizationId?: string;
   companyId?: string;
+  /** app (painel) | email */
+  source?: string;
+  emailRootMessageId?: string;
+  emailLastMessageId?: string;
   platform: Platform;
   category?: string;
   subject: string;

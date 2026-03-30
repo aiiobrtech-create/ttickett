@@ -171,11 +171,11 @@ export const exportCompaniesToPDF = (companies: Company[], title: string) => {
   doc.setTextColor(100);
   doc.text(`Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 14, 30);
 
-  const tableData = companies.map((c) => [c.name, c.observations || '-']);
+  const tableData = companies.map((c) => [c.name, c.supportEmail || '-', c.observations || '-']);
 
   autoTable(doc, {
     startY: 40,
-    head: [['Nome', 'Observações']],
+    head: [['Nome', 'E-mail suporte', 'Observações']],
     body: tableData,
     theme: 'striped',
     headStyles: { fillColor: [88, 101, 242] },
